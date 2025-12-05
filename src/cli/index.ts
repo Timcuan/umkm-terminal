@@ -1223,45 +1223,120 @@ async function selectNewChain(currentChainId: number): Promise<number> {
 
 function showHelp(): void {
   console.log('');
-  console.log(chalk.white.bold('  USAGE'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  console.log(chalk.white.bold('  UMKM TERMINAL - HELP'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  console.log('');
+
+  // Usage
+  console.log(chalk.cyan('  USAGE'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.white('umkm')}              Interactive mode`);
+  console.log(`  ${chalk.white('umkm deploy')}       CLI mode (single token)`);
+  console.log(`  ${chalk.white('umkm -v')}           Show version`);
+  console.log(`  ${chalk.white('umkm -h')}           Show this help`);
   console.log('');
-  console.log(`  ${chalk.cyan('umkm')}              Interactive mode`);
-  console.log(`  ${chalk.cyan('umkm deploy')}       CLI mode`);
-  console.log('');
-  console.log(chalk.white.bold('  CLI OPTIONS'));
+
+  // Features
+  console.log(chalk.cyan('  FEATURES'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.green('[1]')} Deploy New Token    - Single token deployment`);
+  console.log(`  ${chalk.green('[2]')} Batch Deploy        - Deploy 1-100 tokens`);
+  console.log(`  ${chalk.green('[3]')} Manage Tokens       - Update image/metadata`);
+  console.log(`  ${chalk.green('[4]')} Claim Rewards       - Claim trading fees`);
+  console.log(`  ${chalk.green('[5]')} Wallet Info         - Check balances`);
   console.log('');
+
+  // Batch Deploy
+  console.log(chalk.cyan('  BATCH DEPLOY'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log('  Generate Template:');
+  console.log('    1. Network selection (Base, ETH, Arbitrum, etc)');
+  console.log('    2. Token count (1-100)');
+  console.log('    3. Token details (name, symbol, image, desc)');
+  console.log('    4. Social links (website, twitter, telegram, etc)');
+  console.log('    5. Admin & rewards addresses');
+  console.log('    6. Fee configuration (1-80%)');
+  console.log('    7. MEV protection (0-20 blocks)');
+  console.log('    8. Vault settings (optional)');
+  console.log('');
+  console.log('  Deploy from Template:');
+  console.log('    - Select from ./templates/ folder');
+  console.log('    - Full validation before deploy');
+  console.log('    - Progress tracking per token');
+  console.log('    - Auto-save results');
+  console.log('');
+
+  // CLI Options
+  console.log(chalk.cyan('  CLI OPTIONS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log('    -n, --name         Token name');
   console.log('    -s, --symbol       Token symbol');
-  console.log('    -i, --image        Image URL');
+  console.log('    -i, --image        Image URL or IPFS CID');
   console.log('    -d, --desc         Description');
   console.log('    -c, --chain        Chain ID');
   console.log('');
-  console.log(`  ${chalk.gray('Vanity (default: off = Clanker B07):')}`);
+  console.log(`  ${chalk.gray('Vanity Address:')}`);
   console.log('    --vanity-random    Random vanity pattern');
   console.log('    --vanity-prefix    Custom prefix (hex)');
-  console.log('    --vanity-suffix    Custom suffix (hex)');
+  console.log('    --vanity-suffix    Custom suffix (hex, max 3)');
   console.log('');
-  console.log(chalk.white.bold('  ENVIRONMENT (.env)'));
+
+  // Environment
+  console.log(chalk.cyan('  ENVIRONMENT (.env)'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log('');
   console.log(`  ${chalk.yellow('Required:')}`);
-  console.log('    PRIVATE_KEY        Deployer wallet key');
+  console.log('    PRIVATE_KEY          Deployer wallet key');
+  console.log('');
+  console.log(`  ${chalk.gray('Token Defaults:')}`);
+  console.log('    TOKEN_NAME           Default token name');
+  console.log('    TOKEN_SYMBOL         Default token symbol');
+  console.log('    TOKEN_IMAGE          Default image URL');
+  console.log('    TOKEN_DESCRIPTION    Default description');
   console.log('');
   console.log(`  ${chalk.gray('Admin & Rewards:')}`);
-  console.log('    TOKEN_ADMIN        Token admin address');
-  console.log('    REWARD_RECIPIENT   Fee recipient (100%)');
-  console.log('    REWARD_TOKEN       Both | Paired | Clanker');
+  console.log('    TOKEN_ADMIN          Token admin (empty=deployer)');
+  console.log('    REWARD_RECIPIENT     Fee recipient (empty=admin)');
+  console.log('    REWARD_TOKEN         Both | Paired | Clanker');
   console.log('');
-  console.log(`  ${chalk.gray('Fees:')}`);
-  console.log('    FEE_TYPE           static | dynamic');
-  console.log('    CLANKER_FEE        Clanker fee % (1-80, default: 5)');
-  console.log('    PAIRED_FEE         Paired fee % (1-80, default: 5)');
+  console.log(`  ${chalk.gray('Fees & MEV:')}`);
+  console.log('    FEE_TYPE             static | dynamic');
+  console.log('    CLANKER_FEE          Fee % (1-80, default: 5)');
+  console.log('    PAIRED_FEE           Paired fee % (1-80)');
+  console.log('    MEV_BLOCK_DELAY      MEV delay (0-20, default: 8)');
   console.log('');
-  console.log(`  ${chalk.gray('Other:')}`);
-  console.log('    CHAIN_ID           Default chain');
-  console.log('    MEV_BLOCK_DELAY    MEV delay (default: 8)');
+  console.log(`  ${chalk.gray('Social Links:')}`);
+  console.log('    TOKEN_WEBSITE        Website URL');
+  console.log('    TOKEN_TWITTER        Twitter URL');
+  console.log('    TOKEN_TELEGRAM       Telegram URL');
+  console.log('    TOKEN_DISCORD        Discord URL');
+  console.log('    TOKEN_FARCASTER      Farcaster handle');
+  console.log('');
+  console.log(`  ${chalk.gray('Batch Deploy:')}`);
+  console.log('    BATCH_COUNT          Default token count');
+  console.log('    BATCH_DELAY          Delay between deploys (sec)');
+  console.log('    BATCH_RETRIES        Retry attempts on failure');
+  console.log('');
+  console.log(`  ${chalk.gray('Vault:')}`);
+  console.log('    VAULT_ENABLED        true | false');
+  console.log('    VAULT_PERCENTAGE     Vault % (1-90)');
+  console.log('    VAULT_LOCKUP_DAYS    Lockup days (min 7)');
+  console.log('    VAULT_VESTING_DAYS   Vesting days (0=instant)');
+  console.log('');
+  console.log(`  ${chalk.gray('Vanity:')}`);
+  console.log('    VANITY_SUFFIX        Custom suffix (3 hex chars)');
+  console.log('');
+  console.log(`  ${chalk.gray('Verification:')}`);
+  console.log('    INTERFACE_NAME       Interface name');
+  console.log('    PLATFORM_NAME        Platform name');
+  console.log('');
+
+  // Links
+  console.log(chalk.cyan('  LINKS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log('    Docs:     https://clanker.gitbook.io');
+  console.log('    Clanker:  https://clanker.world');
+  console.log('    GitHub:   https://github.com/Timcuan/umkm-terminal');
   console.log('');
 }
 
@@ -1269,34 +1344,100 @@ async function showSettings(): Promise<void> {
   const env = getEnvConfig();
 
   console.log('');
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
   console.log(chalk.white.bold('  CURRENT SETTINGS'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
   console.log('');
 
   const hasKey = !!env.privateKey;
-  const hasAdmin = !!process.env.TOKEN_ADMIN;
-  const hasRecipient = !!process.env.REWARD_RECIPIENT;
+  const hasAdmin = !!env.tokenAdmin;
+  const hasRecipient = !!env.rewardRecipient;
 
+  // Wallet
+  console.log(chalk.cyan('  WALLET'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(
     `  ${chalk.gray('PRIVATE_KEY:')}       ${hasKey ? chalk.green('Set') : chalk.red('Not set')}`
   );
+  console.log(`  ${chalk.gray('CHAIN_ID:')}          ${env.chainId}`);
+  console.log('');
+
+  // Token Defaults
+  console.log(chalk.cyan('  TOKEN DEFAULTS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.gray('TOKEN_NAME:')}        ${env.tokenName || chalk.gray('(not set)')}`);
   console.log(
-    `  ${chalk.gray('TOKEN_ADMIN:')}       ${hasAdmin ? chalk.green(`${process.env.TOKEN_ADMIN?.slice(0, 10)}...`) : chalk.gray('(deployer)')}`
+    `  ${chalk.gray('TOKEN_SYMBOL:')}      ${env.tokenSymbol || chalk.gray('(not set)')}`
   );
   console.log(
-    `  ${chalk.gray('REWARD_RECIPIENT:')}  ${hasRecipient ? chalk.green(`${process.env.REWARD_RECIPIENT?.slice(0, 10)}...`) : chalk.gray('(deployer)')}`
+    `  ${chalk.gray('TOKEN_IMAGE:')}       ${env.tokenImage ? chalk.green('Set') : chalk.gray('(not set)')}`
+  );
+  console.log('');
+
+  // Admin & Rewards
+  console.log(chalk.cyan('  ADMIN & REWARDS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(
+    `  ${chalk.gray('TOKEN_ADMIN:')}       ${hasAdmin ? chalk.green(`${env.tokenAdmin.slice(0, 10)}...`) : chalk.gray('(deployer)')}`
+  );
+  console.log(
+    `  ${chalk.gray('REWARD_RECIPIENT:')}  ${hasRecipient ? chalk.green(`${env.rewardRecipient.slice(0, 10)}...`) : chalk.gray('(admin)')}`
   );
   console.log(`  ${chalk.gray('REWARD_TOKEN:')}      ${env.rewardToken}`);
   console.log('');
-  console.log(`  ${chalk.gray('CHAIN_ID:')}          ${env.chainId}`);
+
+  // Fees & MEV
+  console.log(chalk.cyan('  FEES & MEV'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(`  ${chalk.gray('FEE_TYPE:')}          ${env.feeType}`);
   console.log(`  ${chalk.gray('CLANKER_FEE:')}       ${env.clankerFee}%`);
   console.log(`  ${chalk.gray('PAIRED_FEE:')}        ${env.pairedFee}%`);
-  console.log(`  ${chalk.gray('MEV_BLOCK_DELAY:')}   ${env.mevBlockDelay}`);
+  console.log(`  ${chalk.gray('MEV_BLOCK_DELAY:')}   ${env.mevBlockDelay} blocks`);
+  console.log('');
+
+  // Batch Deploy
+  console.log(chalk.cyan('  BATCH DEPLOY'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.gray('BATCH_COUNT:')}       ${env.batchCount}`);
+  console.log(`  ${chalk.gray('BATCH_DELAY:')}       ${env.batchDelay}s`);
+  console.log(`  ${chalk.gray('BATCH_RETRIES:')}     ${env.batchRetries}`);
+  console.log('');
+
+  // Vault
+  console.log(chalk.cyan('  VAULT'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(
+    `  ${chalk.gray('VAULT_ENABLED:')}     ${env.vaultEnabled ? chalk.green('Yes') : 'No'}`
+  );
+  if (env.vaultEnabled) {
+    console.log(`  ${chalk.gray('VAULT_PERCENTAGE:')}  ${env.vaultPercentage}%`);
+    console.log(`  ${chalk.gray('VAULT_LOCKUP:')}      ${env.vaultLockupDays} days`);
+    console.log(`  ${chalk.gray('VAULT_VESTING:')}     ${env.vaultVestingDays} days`);
+  }
+  console.log('');
+
+  // Social Links
+  console.log(chalk.cyan('  SOCIAL LINKS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(
+    `  ${chalk.gray('Website:')}           ${env.tokenWebsite || chalk.gray('(not set)')}`
+  );
+  console.log(
+    `  ${chalk.gray('Twitter:')}           ${env.tokenTwitter || chalk.gray('(not set)')}`
+  );
+  console.log(
+    `  ${chalk.gray('Telegram:')}          ${env.tokenTelegram || chalk.gray('(not set)')}`
+  );
+  console.log(
+    `  ${chalk.gray('Discord:')}           ${env.tokenDiscord || chalk.gray('(not set)')}`
+  );
+  console.log(
+    `  ${chalk.gray('Farcaster:')}         ${env.tokenFarcaster || chalk.gray('(not set)')}`
+  );
   console.log('');
 
   // System info
-  console.log(chalk.white.bold('  SYSTEM INFO'));
+  console.log(chalk.cyan('  SYSTEM'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(
     `  ${chalk.gray('Platform:')}          ${PLATFORM_INFO.os}${PLATFORM_INFO.isTermux ? ' (Termux)' : ''}`
@@ -1304,9 +1445,6 @@ async function showSettings(): Promise<void> {
   console.log(`  ${chalk.gray('Node:')}              ${process.version}`);
   console.log(
     `  ${chalk.gray('Terminal:')}          ${PLATFORM_INFO.isTTY ? 'Interactive' : 'Non-interactive'}`
-  );
-  console.log(
-    `  ${chalk.gray('Colors:')}            ${PLATFORM_INFO.colorLevel > 0 ? 'Enabled' : 'Disabled'}`
   );
   console.log('');
   console.log(chalk.gray('  Edit .env file to change settings'));
@@ -2324,13 +2462,25 @@ async function generateBatchTemplate(): Promise<void> {
     default: env.tokenDiscord || '',
   });
 
+  const farcaster = await input({
+    message: 'Farcaster:',
+    default: env.tokenFarcaster || '',
+  });
+
+  const zora = await input({
+    message: 'Zora:',
+    default: '',
+  });
+
   const socials =
-    website || twitter || telegram || discord
+    website || twitter || telegram || discord || farcaster || zora
       ? {
           website: website || undefined,
           twitter: twitter || undefined,
           telegram: telegram || undefined,
           discord: discord || undefined,
+          farcaster: farcaster || undefined,
+          zora: zora || undefined,
         }
       : undefined;
 
@@ -2361,30 +2511,15 @@ async function generateBatchTemplate(): Promise<void> {
   console.log(chalk.white.bold('  STEP 6: FEE CONFIGURATION'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
-  const feeMode = await select({
-    message: 'Fee Mode:',
-    choices: [
-      { name: `Static ${env.clankerFee}% (from .env)`, value: 'env' },
-      { name: 'Static 5% (recommended)', value: 'static_default' },
-      { name: 'Static Custom (1-80%)', value: 'static_custom' },
-    ],
-    default: 'env',
+  const feeInput = await input({
+    message: 'Fee % (1-80):',
+    default: String(env.clankerFee),
+    validate: (v) => {
+      const n = Number(v);
+      return (n >= 1 && n <= 80) || 'Must be 1-80%';
+    },
   });
-
-  let fee = env.clankerFee;
-  if (feeMode === 'static_default') {
-    fee = 5;
-  } else if (feeMode === 'static_custom') {
-    const customFeeInput = await input({
-      message: 'Custom Fee % (1-80):',
-      default: '5',
-      validate: (v) => {
-        const n = Number(v);
-        return (n >= 1 && n <= 80) || 'Must be 1-80%';
-      },
-    });
-    fee = Number(customFeeInput);
-  }
+  const fee = Number(feeInput);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Step 7: MEV Protection
@@ -2508,12 +2643,32 @@ async function generateBatchTemplate(): Promise<void> {
   console.log('');
 
   // Save location
-  const filename = await input({
-    message: 'Save template to:',
-    default: `./templates/batch-${Date.now()}.json`,
+  const templateName = await input({
+    message: 'Template name:',
+    default: `batch-${name.toLowerCase().replace(/\s+/g, '-')}`,
   });
 
+  // Ensure filename ends with .json and is in templates folder
+  let filename = templateName.trim();
+  if (!filename.endsWith('.json')) {
+    filename = `${filename}.json`;
+  }
+  if (
+    !filename.startsWith('./templates/') &&
+    !filename.startsWith('templates/') &&
+    !path.isAbsolute(filename)
+  ) {
+    filename = `./templates/${filename}`;
+  }
+
   const fullPath = path.resolve(filename);
+
+  // Ensure templates directory exists
+  const templatesDir = path.dirname(fullPath);
+  if (!fs.existsSync(templatesDir)) {
+    fs.mkdirSync(templatesDir, { recursive: true });
+  }
+
   saveTemplate(template, fullPath);
 
   console.log('');
