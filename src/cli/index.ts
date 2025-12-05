@@ -2691,17 +2691,20 @@ async function generateBatchTemplate(): Promise<void> {
     default: env.tokenFarcaster || '',
   });
 
-  // Validate Farcaster and fetch FID
-  let farcaster = farcasterInput;
+  // Validate Farcaster and fetch FID - store FID as the value
+  let farcaster = '';
   if (farcasterInput) {
     process.stdout.write(chalk.gray('  Fetching Farcaster info...'));
     const fcResult = await validateFarcaster(farcasterInput);
     process.stdout.write(`\r${' '.repeat(40)}\r`);
     if (fcResult.fid) {
       console.log(chalk.green(`  ✓ Farcaster: ${fcResult.display}`));
-      farcaster = farcasterInput;
+      // Store FID as string for socials (this is what Clanker expects)
+      farcaster = String(fcResult.fid);
     } else if (fcResult.display) {
       console.log(chalk.yellow(`  ! ${fcResult.display}`));
+      // If can't fetch FID, use username as fallback
+      farcaster = farcasterInput;
     }
   }
 
@@ -2777,31 +2780,28 @@ async function generateBatchTemplate(): Promise<void> {
   console.log(chalk.white.bold('  STEP 6: FEE CONFIGURATION'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
-  const feeMode = await select({
-    message: 'Fee Mode:',
+  // First ask for fee type
+  const feeType = await select({
+    message: 'Fee Type:',
     choices: [
-      { name: `Static ${env.clankerFee}% (from .env)`, value: 'static_env' },
-      { name: 'Static Custom (1-80%)', value: 'static_custom' },
-      { name: 'Dynamic (auto-adjust based on volume)', value: 'dynamic' },
+      { name: 'Static - Fixed fee percentage', value: 'static' as const },
+      { name: 'Dynamic - Auto-adjust based on volume', value: 'dynamic' as const },
     ],
-    default: 'static_env',
+    default: 'static' as const,
   });
 
-  let fee = env.clankerFee;
-  let feeType: 'static' | 'dynamic' = 'static';
+  // Then ask for fee percentage
+  const feeInput = await input({
+    message: 'Fee % (1-80):',
+    default: String(env.clankerFee),
+    validate: (v) => {
+      const n = Number(v);
+      return (n >= 1 && n <= 80) || 'Must be 1-80%';
+    },
+  });
+  const fee = Number(feeInput);
 
-  if (feeMode === 'static_custom') {
-    const feeInput = await input({
-      message: 'Fee % (1-80):',
-      default: String(env.clankerFee),
-      validate: (v) => {
-        const n = Number(v);
-        return (n >= 1 && n <= 80) || 'Must be 1-80%';
-      },
-    });
-    fee = Number(feeInput);
-  } else if (feeMode === 'dynamic') {
-    feeType = 'dynamic';
+  if (feeType === 'dynamic') {
     console.log(chalk.gray('  Dynamic fee will auto-adjust based on trading volume'));
   }
 
@@ -2930,12 +2930,13 @@ async function generateBatchTemplate(): Promise<void> {
 
   console.log(chalk.cyan('  CONFIGURATION'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(
-    `  ${chalk.gray('Fee:')}      ${chalk.white(feeType === 'dynamic' ? 'Dynamic' : `${fee}%`)}`
-  );
+  console.log(`  ${chalk.gray('Fee:')}      ${chalk.white(`${fee}% (${feeType})`)}`);
   console.log(`  ${chalk.gray('MEV:')}      ${chalk.white(`${mev} blocks`)}`);
   console.log(`  ${chalk.gray('Admin:')}    ${chalk.white(tokenAdmin || '(deployer)')}`);
   console.log(`  ${chalk.gray('Reward:')}   ${chalk.white(rewardRecipient || '(admin)')}`);
+  if (socials?.farcaster) {
+    console.log(`  ${chalk.gray('Farcaster:')} ${chalk.cyan(`FID: ${socials.farcaster}`)}`);
+  }
   if (perTokenConfig.length > 0) {
     const customCount = perTokenConfig.filter((c) => c.tokenAdmin || c.rewardRecipient).length;
     console.log(
