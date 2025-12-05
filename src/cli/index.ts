@@ -12,7 +12,12 @@ import 'dotenv/config';
 import { privateKeyToAccount } from 'viem/accounts';
 import { CHAIN_IDS } from '../chains/index.js';
 import { getChainName, getExplorerUrl } from '../config/index.js';
-import { Deployer } from '../deployer/index.js';
+import {
+  BatchDeployer,
+  type BatchTokenConfig,
+  type ChainName,
+  Deployer,
+} from '../deployer/index.js';
 import {
   estimateVanityDifficulty,
   formatDuration,
@@ -210,12 +215,13 @@ class DeployAnimation {
 // Main menu options - organized by category
 const MENU_OPTIONS = [
   { name: `${chalk.cyan('[1]')} Deploy New Token`, value: 'deploy' },
-  { name: `${chalk.cyan('[2]')} Manage Tokens`, value: 'manage' },
-  { name: `${chalk.cyan('[3]')} Claim Rewards`, value: 'claim' },
-  { name: `${chalk.cyan('[4]')} Wallet Info`, value: 'wallet' },
+  { name: `${chalk.green('[2]')} Batch Deploy (1-100 tokens)`, value: 'batch_deploy' },
+  { name: `${chalk.cyan('[3]')} Manage Tokens`, value: 'manage' },
+  { name: `${chalk.cyan('[4]')} Claim Rewards`, value: 'claim' },
+  { name: `${chalk.cyan('[5]')} Wallet Info`, value: 'wallet' },
   { name: chalk.gray('---'), value: 'separator', disabled: true },
-  { name: `${chalk.cyan('[5]')} Settings`, value: 'settings' },
-  { name: `${chalk.cyan('[6]')} Help`, value: 'help' },
+  { name: `${chalk.cyan('[6]')} Settings`, value: 'settings' },
+  { name: `${chalk.cyan('[7]')} Help`, value: 'help' },
   { name: `${chalk.cyan('[0]')} Exit`, value: 'exit' },
 ];
 
@@ -2157,6 +2163,262 @@ async function cliDeploy(config: TokenInfo): Promise<void> {
 }
 
 // ============================================================================
+// Batch Deploy
+// ============================================================================
+
+async function showBatchDeployMenu(): Promise<void> {
+  console.log('');
+  console.log(chalk.green.bold('  BATCH DEPLOY'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(chalk.white('  Deploy multiple tokens (1-100) at once'));
+  console.log('');
+
+  // Select deploy mode
+  const mode = await select({
+    message: 'Select batch mode:',
+    choices: [
+      { name: `${chalk.cyan('[1]')} Generate Numbered Tokens`, value: 'generate' },
+      { name: `${chalk.cyan('[2]')} Enter Tokens Manually`, value: 'manual' },
+      { name: `${chalk.cyan('[3]')} Load from JSON File`, value: 'json' },
+      { name: chalk.gray('---'), value: 'separator', disabled: true },
+      { name: `${chalk.yellow('[<]')} Back to Main Menu`, value: 'back' },
+    ],
+  });
+
+  if (mode === 'back') return;
+
+  // Select chain
+  const chainId = await select({
+    message: 'Select chain:',
+    choices: CHAIN_OPTIONS,
+    default: 8453,
+  });
+
+  const chainName =
+    (Object.entries({
+      base: 8453,
+      ethereum: 1,
+      arbitrum: 42161,
+      unichain: 130,
+      monad: 10143,
+    }).find(([_, id]) => id === chainId)?.[0] as ChainName) || 'base';
+
+  let tokens: BatchTokenConfig[] = [];
+
+  if (mode === 'generate') {
+    // Generate numbered tokens
+    const namePrefix = await input({
+      message: 'Token name prefix (e.g., "My Token"):',
+      default: 'Token',
+    });
+
+    const symbolPrefix = await input({
+      message: 'Symbol prefix (e.g., "TKN"):',
+      default: 'TKN',
+    });
+
+    const countStr = await input({
+      message: 'How many tokens (1-100):',
+      default: '5',
+      validate: (v) => {
+        const n = parseInt(v);
+        if (Number.isNaN(n) || n < 1 || n > 100) return 'Enter 1-100';
+        return true;
+      },
+    });
+
+    const count = parseInt(countStr);
+    const startIndexStr = await input({
+      message: 'Start from number:',
+      default: '1',
+    });
+
+    const startIndex = parseInt(startIndexStr) || 1;
+
+    const batch = new BatchDeployer();
+    tokens = batch.generateTokens(count, {
+      namePrefix,
+      symbolPrefix,
+      startIndex,
+    });
+
+    console.log(chalk.gray(`\n  Generated ${tokens.length} tokens:`));
+    for (const t of tokens.slice(0, 5)) {
+      console.log(chalk.gray(`    - ${t.name} (${t.symbol})`));
+    }
+    if (tokens.length > 5) {
+      console.log(chalk.gray(`    ... and ${tokens.length - 5} more`));
+    }
+  } else if (mode === 'manual') {
+    // Enter tokens manually
+    console.log(chalk.gray('\n  Enter tokens one by one. Type "done" when finished.\n'));
+
+    let adding = true;
+    while (adding && tokens.length < 100) {
+      const name = await input({
+        message: `Token ${tokens.length + 1} name (or "done"):`,
+      });
+
+      if (name.toLowerCase() === 'done') {
+        adding = false;
+        continue;
+      }
+
+      const symbol = await input({
+        message: `Token ${tokens.length + 1} symbol:`,
+      });
+
+      tokens.push({ name, symbol });
+      console.log(chalk.green(`  Added: ${name} (${symbol})`));
+    }
+  } else if (mode === 'json') {
+    // Load from JSON file
+    const filePath = await input({
+      message: 'JSON file path:',
+      default: './tokens.json',
+    });
+
+    try {
+      const fullPath = path.resolve(filePath);
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      const data = JSON.parse(content);
+
+      if (Array.isArray(data)) {
+        tokens = data.map(
+          (t: { name: string; symbol: string; image?: string; description?: string }) => ({
+            name: t.name,
+            symbol: t.symbol,
+            image: t.image,
+            description: t.description,
+          })
+        );
+      } else {
+        console.log(chalk.red('  JSON must be an array of tokens'));
+        return;
+      }
+
+      console.log(chalk.green(`\n  Loaded ${tokens.length} tokens from ${filePath}`));
+    } catch (err) {
+      console.log(chalk.red(`  Error loading file: ${err}`));
+      return;
+    }
+  }
+
+  if (tokens.length === 0) {
+    console.log(chalk.yellow('\n  No tokens to deploy.\n'));
+    return;
+  }
+
+  // Configure options
+  const feeStr = await input({
+    message: 'Fee percentage (1-80):',
+    default: '5',
+  });
+  const feePercent = parseInt(feeStr) || 5;
+
+  const mevStr = await input({
+    message: 'MEV protection blocks (0 to disable):',
+    default: '8',
+  });
+  const mev = parseInt(mevStr) || 8;
+
+  const delayStr = await input({
+    message: 'Delay between deploys (seconds):',
+    default: '3',
+  });
+  const delayMs = (parseInt(delayStr) || 3) * 1000;
+
+  // Confirm
+  console.log('');
+  console.log(chalk.white.bold('  Batch Deploy Summary'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  Chain:    ${chalk.cyan(getChainName(chainId))}`);
+  console.log(`  Tokens:   ${chalk.cyan(tokens.length)}`);
+  console.log(`  Fee:      ${chalk.cyan(`${feePercent}%`)}`);
+  console.log(`  MEV:      ${chalk.cyan(mev > 0 ? `${mev} blocks` : 'Disabled')}`);
+  console.log(`  Delay:    ${chalk.cyan(`${delayMs / 1000}s`)}`);
+  console.log('');
+
+  const confirmed = await confirm({
+    message: `Deploy ${tokens.length} tokens on ${getChainName(chainId)}?`,
+    default: true,
+  });
+
+  if (!confirmed) {
+    console.log(chalk.yellow('\n  Cancelled.\n'));
+    return;
+  }
+
+  // Deploy!
+  console.log('');
+  console.log(chalk.cyan.bold('  Starting Batch Deploy...'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
+  const batch = new BatchDeployer();
+
+  const results = await batch.deploy(tokens, {
+    chain: chainName,
+    feePercent,
+    mev,
+    delayMs,
+    retries: 2,
+    retryDelayMs: 5000,
+    onProgress: (index, total, result) => {
+      const pct = Math.round(((index + 1) / total) * 100);
+      const bar = createProgressBar((index + 1) / total, 15);
+      const status = result.success ? chalk.green('OK') : chalk.red('FAIL');
+      console.log(`  ${bar} ${pct}% | ${result.symbol}: ${status}`);
+      if (result.success && result.tokenAddress) {
+        console.log(chalk.gray(`       ${result.tokenAddress}`));
+      } else if (result.error) {
+        console.log(chalk.red(`       ${result.error}`));
+      }
+    },
+    onRetry: (_index, attempt, token) => {
+      console.log(chalk.yellow(`  ⟳ Retry #${attempt} for ${token.symbol}...`));
+    },
+  });
+
+  const stats = batch.getStats(results);
+
+  // Summary
+  console.log('');
+  console.log(chalk.white.bold('  Batch Deploy Complete!'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  Total:        ${results.total}`);
+  console.log(`  Successful:   ${chalk.green(results.successful)}`);
+  console.log(`  Failed:       ${results.failed > 0 ? chalk.red(results.failed) : '0'}`);
+  console.log(`  Success Rate: ${stats.successRate}%`);
+  console.log(`  Duration:     ${stats.totalDuration}`);
+  console.log('');
+
+  // List deployed tokens
+  const deployed = results.tokens.filter((t) => t.address);
+  if (deployed.length > 0) {
+    console.log(chalk.white.bold('  Deployed Tokens:'));
+    for (const token of deployed) {
+      console.log(`  ${chalk.cyan(token.symbol)}: ${token.address}`);
+      console.log(chalk.gray(`    ${getExplorerUrl(chainId)}/token/${token.address}`));
+    }
+  }
+
+  // Save results
+  const saveResults = await confirm({
+    message: 'Save results to JSON file?',
+    default: true,
+  });
+
+  if (saveResults) {
+    const filename = `batch-deploy-${Date.now()}.json`;
+    const json = batch.exportResults(results);
+    fs.writeFileSync(filename, json);
+    console.log(chalk.green(`\n  Results saved to ${filename}\n`));
+  }
+
+  await input({ message: 'Press Enter to continue...' });
+}
+
+// ============================================================================
 // Main Entry
 // ============================================================================
 
@@ -2211,6 +2473,10 @@ async function main(): Promise<void> {
           }
           break;
         }
+
+        case 'batch_deploy':
+          await showBatchDeployMenu();
+          break;
 
         case 'manage': {
           let manageRunning = true;
