@@ -38,7 +38,7 @@ export interface SimpleDeployConfig {
   name: string;
   symbol: string;
   image?: string;
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // Token Metadata (Optional)
   // ─────────────────────────────────────────────────────────────────────────
@@ -50,14 +50,14 @@ export interface SimpleDeployConfig {
     discord?: string;
     website?: string;
   };
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // Chain & Admin
   // ─────────────────────────────────────────────────────────────────────────
   chainId?: number;
   /** Token admin address (defaults to deployer) */
   tokenAdmin?: `0x${string}`;
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // Rewards Configuration
   // ─────────────────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ export interface SimpleDeployConfig {
     /** Reward token type: Both, Paired, or Clanker (default: Paired) */
     rewardToken?: RewardTokenType;
   }>;
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // Pool Configuration (Optional)
   // ─────────────────────────────────────────────────────────────────────────
@@ -81,7 +81,7 @@ export interface SimpleDeployConfig {
     /** Initial market cap in ETH (default: ~10 ETH) */
     initialMarketCap?: number;
   };
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // Fee Configuration (Optional)
   // ─────────────────────────────────────────────────────────────────────────
@@ -97,13 +97,13 @@ export interface SimpleDeployConfig {
     /** Max LP fee % (1-5, default: 5) - for dynamic */
     maxLpFee?: number;
   };
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // MEV Protection (Enabled by default)
   // ─────────────────────────────────────────────────────────────────────────
   /** MEV block delay (default: 8, set 0 to disable) */
   mev?: boolean | number;
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // Vault (Disabled by default)
   // ─────────────────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ export interface SimpleDeployConfig {
     /** Vesting duration in days (0 = instant) */
     vestingDays?: number;
   };
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // Deployment Context (for clanker.world verification)
   // ─────────────────────────────────────────────────────────────────────────
@@ -126,7 +126,7 @@ export interface SimpleDeployConfig {
     platform?: string;
     requestId?: string;
   };
-  
+
   // ─────────────────────────────────────────────────────────────────────────
   // Vanity Address (Optional)
   // ─────────────────────────────────────────────────────────────────────────
@@ -222,10 +222,23 @@ export class Deployer {
     const chainName = getChainName(chainId);
 
     try {
+      // ─────────────────────────────────────────────────────────────────────
+      // Validate required fields
+      // ─────────────────────────────────────────────────────────────────────
+      if (!config.name || config.name.trim().length === 0) {
+        throw new Error('Token name is required');
+      }
+      if (!config.symbol || config.symbol.trim().length === 0) {
+        throw new Error('Token symbol is required');
+      }
+      if (config.symbol.length > 10) {
+        throw new Error(`Token symbol too long (max 10 chars), got ${config.symbol.length}`);
+      }
+
       // Build token config
       const tokenConfig: ClankerTokenV4 = {
-        name: config.name,
-        symbol: config.symbol,
+        name: config.name.trim(),
+        symbol: config.symbol.trim().toUpperCase(),
         image: config.image || this.config.defaultImage || '',
         tokenAdmin: config.tokenAdmin || this.address,
         chainId,
@@ -245,14 +258,24 @@ export class Deployer {
       // Rewards Configuration (Multi-recipient support)
       // ─────────────────────────────────────────────────────────────────────
       if (config.rewardRecipients && config.rewardRecipients.length > 0) {
-        // Convert allocation % to bps (0.1% = 10 bps, 99.9% = 9990 bps, 100% = 10000 bps)
         const recipients = config.rewardRecipients;
-        
+
+        // Validate: max 7 recipients
+        if (recipients.length > 7) {
+          throw new Error('Maximum 7 reward recipients allowed');
+        }
+
+        // Validate: total allocation must be ~100%
+        const totalAllocation = recipients.reduce((sum, r) => sum + r.allocation, 0);
+        if (Math.abs(totalAllocation - 100) > 0.01) {
+          throw new Error(`Reward allocations must sum to 100%, got ${totalAllocation}%`);
+        }
+
+        // Convert allocation % to bps (0.1% = 10 bps, 100% = 10000 bps)
         tokenConfig.rewards = {
           recipients: recipients.map((r, index) => {
-            // Calculate bps with precision (allocation can be decimal like 0.1)
             let bps = Math.round(r.allocation * 100); // % to bps
-            
+
             // For last recipient, ensure total is exactly 10000
             if (index === recipients.length - 1) {
               const previousBps = recipients
@@ -260,12 +283,12 @@ export class Deployer {
                 .reduce((sum, prev) => sum + Math.round(prev.allocation * 100), 0);
               bps = 10000 - previousBps;
             }
-            
+
             return {
-              admin: r.address, // Each recipient is their own admin
+              admin: r.address,
               recipient: r.address,
               bps,
-              feePreference: r.rewardToken || 'Both', // Default to Both (token + WETH)
+              feePreference: r.rewardToken || 'Both',
             };
           }),
         };
@@ -286,21 +309,38 @@ export class Deployer {
       if (config.fees) {
         const feeType = config.fees.type || 'static';
         if (feeType === 'static') {
-          // User inputs % (1-80), convert to bps (100-8000)
-          // Default: 5% = 500 bps
+          const clankerFee = config.fees.clankerFee ?? 5;
+          const pairedFee = config.fees.pairedFee ?? 5;
+
+          // Validate fee range (1-80%)
+          if (clankerFee < 1 || clankerFee > 80) {
+            throw new Error(`clankerFee must be 1-80%, got ${clankerFee}%`);
+          }
+          if (pairedFee < 1 || pairedFee > 80) {
+            throw new Error(`pairedFee must be 1-80%, got ${pairedFee}%`);
+          }
+
           tokenConfig.fees = {
             type: 'static',
-            clankerFee: (config.fees.clankerFee ?? 5) * 100, // 5% -> 500 bps
-            pairedFee: (config.fees.pairedFee ?? 5) * 100,   // 5% -> 500 bps
+            clankerFee: clankerFee * 100, // % -> bps
+            pairedFee: pairedFee * 100,
           };
         } else {
-          // Dynamic fees - user inputs % for baseFee/maxLpFee
-          // Default: baseFee 1% = 100 bps, maxFee 5% = 500 bps
+          const baseFee = config.fees.baseFee ?? 1;
+          const maxLpFee = config.fees.maxLpFee ?? 5;
+
+          // Validate dynamic fee range (0.5-5%)
+          if (baseFee < 0.5 || baseFee > 5) {
+            throw new Error(`baseFee must be 0.5-5%, got ${baseFee}%`);
+          }
+          if (maxLpFee < 0.5 || maxLpFee > 5) {
+            throw new Error(`maxLpFee must be 0.5-5%, got ${maxLpFee}%`);
+          }
+
           tokenConfig.fees = {
             type: 'dynamic',
-            baseFee: (config.fees.baseFee ?? 1) * 100,       // 1% -> 100 bps
-            maxFee: (config.fees.maxLpFee ?? 5) * 100,       // 5% -> 500 bps
-            // Default values for other dynamic fee params
+            baseFee: baseFee * 100, // % -> bps
+            maxFee: maxLpFee * 100,
             startingSniperFee: 500,
             endingSniperFee: 100,
             clankerFee: 100,
@@ -318,9 +358,22 @@ export class Deployer {
       // Vault (Disabled by default)
       // ─────────────────────────────────────────────────────────────────────
       if (config.vault?.enabled && config.vault.percentage && config.vault.percentage > 0) {
+        const percentage = config.vault.percentage;
+        const lockupDays = config.vault.lockupDays ?? 30;
+
+        // Validate vault percentage (1-90%)
+        if (percentage < 1 || percentage > 90) {
+          throw new Error(`Vault percentage must be 1-90%, got ${percentage}%`);
+        }
+
+        // Validate lockup duration (min 7 days)
+        if (lockupDays < 7) {
+          throw new Error(`Vault lockup must be at least 7 days, got ${lockupDays} days`);
+        }
+
         tokenConfig.vault = {
-          percentage: config.vault.percentage,
-          lockupDuration: (config.vault.lockupDays ?? 30) * 24 * 60 * 60,
+          percentage,
+          lockupDuration: lockupDays * 24 * 60 * 60,
           vestingDuration: (config.vault.vestingDays ?? 0) * 24 * 60 * 60,
         };
       }

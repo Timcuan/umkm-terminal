@@ -1,35 +1,28 @@
 /**
  * Vanity Address Generator for Clanker
- * 
+ *
  * Clanker CREATE2 Mechanism (from v4-contracts source):
- * 
+ *
  * In ClankerDeployer.sol:
  * ```solidity
  * ClankerToken token = new ClankerToken{
  *     salt: keccak256(abi.encode(tokenConfig.tokenAdmin, tokenConfig.salt))
  * }(name, symbol, supply, admin, image, metadata, context, chainId);
  * ```
- * 
+ *
  * CREATE2 Address Formula:
  * address = keccak256(0xff ++ deployer ++ actualSalt ++ initCodeHash)[12:]
- * 
+ *
  * Where:
  * - deployer = Clanker factory address
  * - actualSalt = keccak256(abi.encode(tokenAdmin, userSalt))
  * - initCodeHash = keccak256(creationCode + constructorArgs)
- * 
+ *
  * Key insight: The actualSalt depends on tokenAdmin, so we mine userSalt
  * and compute actualSalt for each attempt.
  */
 
-import { 
-  keccak256, 
-  concat, 
-  getAddress, 
-  toBytes, 
-  pad,
-  encodeAbiParameters,
-} from 'viem';
+import { concat, encodeAbiParameters, getAddress, keccak256, pad, toBytes } from 'viem';
 
 export interface VanityResult {
   salt: `0x${string}`;
@@ -68,11 +61,43 @@ export type VanityMode = 'off' | 'random' | 'custom';
 
 // Popular 3-char suffix patterns for random mode (fast mining)
 const QUICK_SUFFIX_PATTERNS = [
-  '000', '111', '222', '333', '444', '555', '666', '777', '888', '999',
-  'aaa', 'bbb', 'ccc', 'ddd', 'eee', 'fff',
-  'abc', 'def', 'ace', 'bad', 'bed', 'cab', 'dab', 'fab',
-  '420', '069', '007', '100', '123', '321', '911',
-  'dad', 'mom', 'bae', 'bff', 'wow', 'lol',
+  '000',
+  '111',
+  '222',
+  '333',
+  '444',
+  '555',
+  '666',
+  '777',
+  '888',
+  '999',
+  'aaa',
+  'bbb',
+  'ccc',
+  'ddd',
+  'eee',
+  'fff',
+  'abc',
+  'def',
+  'ace',
+  'bad',
+  'bed',
+  'cab',
+  'dab',
+  'fab',
+  '420',
+  '069',
+  '007',
+  '100',
+  '123',
+  '321',
+  '911',
+  'dad',
+  'mom',
+  'bae',
+  'bff',
+  'wow',
+  'lol',
 ];
 
 /**
@@ -121,11 +146,11 @@ export function computeActualSalt(
 function incrementSalt(salt: `0x${string}`): `0x${string}` {
   const bytes = new Uint8Array(32);
   const hexStr = salt.slice(2);
-  
+
   for (let i = 0; i < 32; i++) {
     bytes[i] = parseInt(hexStr.slice(i * 2, i * 2 + 2), 16);
   }
-  
+
   // Increment from the end (big-endian)
   for (let i = 31; i >= 0; i--) {
     if (bytes[i] < 255) {
@@ -134,7 +159,7 @@ function incrementSalt(salt: `0x${string}`): `0x${string}` {
     }
     bytes[i] = 0;
   }
-  
+
   return `0x${Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')}` as `0x${string}`;
@@ -150,13 +175,8 @@ export function computeCreate2Address(
   initCodeHash: `0x${string}`
 ): `0x${string}` {
   const saltBytes = pad(toBytes(salt), { size: 32 });
-  
-  const data = concat([
-    '0xff',
-    factory,
-    saltBytes,
-    initCodeHash,
-  ]);
+
+  const data = concat(['0xff', factory, saltBytes, initCodeHash]);
   const hash = keccak256(data);
   return getAddress(`0x${hash.slice(-40)}`) as `0x${string}`;
 }
@@ -164,30 +184,29 @@ export function computeCreate2Address(
 /**
  * Check if address matches vanity pattern
  */
-function matchesPattern(
-  address: string,
-  prefix?: string,
-  suffix?: string
-): boolean {
+function matchesPattern(address: string, prefix?: string, suffix?: string): boolean {
   const addr = address.toLowerCase().slice(2);
-  
+
   if (prefix) {
     const p = prefix.toLowerCase().replace(/^0x/, '');
     if (!addr.startsWith(p)) return false;
   }
-  
+
   if (suffix) {
     const s = suffix.toLowerCase().replace(/^0x/, '');
     if (!addr.endsWith(s)) return false;
   }
-  
+
   return true;
 }
 
 /**
  * Estimate difficulty based on pattern length
  */
-export function estimateVanityDifficulty(prefix?: string, suffix?: string): {
+export function estimateVanityDifficulty(
+  prefix?: string,
+  suffix?: string
+): {
   difficulty: number;
   estimatedAttempts: number;
   estimatedTimeSeconds: number;
@@ -195,11 +214,11 @@ export function estimateVanityDifficulty(prefix?: string, suffix?: string): {
   let chars = 0;
   if (prefix) chars += prefix.replace(/^0x/, '').length;
   if (suffix) chars += suffix.replace(/^0x/, '').length;
-  
-  const difficulty = Math.pow(16, chars);
+
+  const difficulty = 16 ** chars;
   const estimatedAttempts = difficulty;
   const estimatedTimeSeconds = estimatedAttempts / 100000;
-  
+
   return { difficulty, estimatedAttempts, estimatedTimeSeconds };
 }
 
@@ -226,19 +245,17 @@ export interface VanityMineOptions {
 
 /**
  * Mine for a vanity address using actual Clanker CREATE2 mechanism
- * 
+ *
  * This mines userSalt values and computes the actual CREATE2 address
  * using the Clanker factory's salt derivation:
  * actualSalt = keccak256(abi.encode(tokenAdmin, userSalt))
- * 
+ *
  * Features:
  * - Timeout protection to prevent deploy errors
  * - Progress callback for UI updates
  * - Returns null if not found (deploy will use random salt)
  */
-export async function mineVanitySalt(
-  options: VanityMineOptions
-): Promise<VanityResult | null> {
+export async function mineVanitySalt(options: VanityMineOptions): Promise<VanityResult | null> {
   const {
     chainId,
     tokenAdmin,
@@ -257,11 +274,11 @@ export async function mineVanitySalt(
 
   if (!prefix && !suffix) {
     const salt = generateRandomSalt();
-    return { 
-      salt, 
+    return {
+      salt,
       address: '0x0000000000000000000000000000000000000000' as `0x${string}`,
-      attempts: 1, 
-      timeMs: 0 
+      attempts: 1,
+      timeMs: 0,
     };
   }
 
@@ -280,7 +297,7 @@ export async function mineVanitySalt(
 
     // Compute the actual salt that Clanker will use
     const actualSalt = computeActualSalt(tokenAdmin, userSalt);
-    
+
     // Check if actualSalt matches the pattern
     if (matchesPattern(actualSalt, prefix, suffix)) {
       return {
@@ -295,7 +312,7 @@ export async function mineVanitySalt(
       const now = Date.now();
       const elapsedSinceProgress = (now - lastProgressTime) / 1000;
       const rate = 50000 / elapsedSinceProgress;
-      onProgress(i, rate, userSalt.slice(0, 10) + '...');
+      onProgress(i, rate, `${userSalt.slice(0, 10)}...`);
       lastProgressTime = now;
     }
 
@@ -330,7 +347,7 @@ export async function quickMineVanitySalt(
 
     const actualSalt = computeActualSalt(tokenAdmin, userSalt);
     const actualSaltLower = actualSalt.toLowerCase().slice(2);
-    
+
     if (actualSaltLower.endsWith(suffix.toLowerCase())) {
       return userSalt;
     }
@@ -351,19 +368,19 @@ export async function quickMineVanitySalt(
  */
 export function validateVanityPattern(pattern: string): { valid: boolean; error?: string } {
   const cleaned = pattern.replace(/^0x/, '').toLowerCase();
-  
+
   if (cleaned.length === 0) {
     return { valid: true };
   }
-  
+
   if (cleaned.length > 3) {
     return { valid: false, error: 'Max 3 characters to avoid timeout during deploy' };
   }
-  
+
   if (!/^[0-9a-f]*$/.test(cleaned)) {
     return { valid: false, error: 'Must be hexadecimal (0-9, a-f)' };
   }
-  
+
   return { valid: true };
 }
 

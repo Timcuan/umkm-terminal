@@ -13,14 +13,14 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { CHAIN_IDS } from '../chains/index.js';
 import { getChainName, getExplorerUrl } from '../config/index.js';
 import { Deployer } from '../deployer/index.js';
-import { 
-  estimateVanityDifficulty, 
-  formatDuration, 
-  validateVanityPattern, 
-  mineVanitySalt,
+import {
+  estimateVanityDifficulty,
+  formatDuration,
   getRandomVanityPattern,
   MAX_MINING_TIME_MS,
+  mineVanitySalt,
   type VanityMode,
+  validateVanityPattern,
 } from './vanity.js';
 
 // ============================================================================
@@ -94,10 +94,14 @@ class MiningAnimation {
     this.startTime = Date.now();
     console.log('');
     console.log(chalk.cyan('  +------------------------------------------+'));
-    console.log(chalk.cyan('  |') + chalk.white.bold('         VANITY MINING IN PROGRESS        ') + chalk.cyan('|'));
+    console.log(
+      chalk.cyan('  |') +
+        chalk.white.bold('         VANITY MINING IN PROGRESS        ') +
+        chalk.cyan('|')
+    );
     console.log(chalk.cyan('  +------------------------------------------+'));
     console.log('');
-    
+
     // Only animate in TTY mode
     if (ENABLE_ANIMATIONS) {
       this.interval = setInterval(() => this.render(), 100);
@@ -114,13 +118,13 @@ class MiningAnimation {
     const elapsed = (Date.now() - this.startTime) / 1000;
     const progress = Math.min(elapsed / (this.maxTime / 1000), 1);
     const progressBar = createProgressBar(progress);
-    const timeLeft = Math.max(0, Math.ceil((this.maxTime / 1000) - elapsed));
+    const timeLeft = Math.max(0, Math.ceil(this.maxTime / 1000 - elapsed));
     const attemptsK = (this.currentAttempts / 1000).toFixed(0);
-    
+
     process.stdout.write(`\r${' '.repeat(70)}\r`);
     process.stdout.write(
       `  ${chalk.cyan(spinner)} ${chalk.yellow(this.pattern)} ${progressBar} ` +
-      `${chalk.white(`${timeLeft}s`)} ${chalk.cyan(`${attemptsK}k`)} tries`
+        `${chalk.white(`${timeLeft}s`)} ${chalk.cyan(`${attemptsK}k`)} tries`
     );
   }
 
@@ -156,10 +160,14 @@ class DeployAnimation {
   start(): void {
     console.log('');
     console.log(chalk.cyan('  +------------------------------------------+'));
-    console.log(chalk.cyan('  |') + chalk.white.bold('            DEPLOYING TOKEN               ') + chalk.cyan('|'));
+    console.log(
+      chalk.cyan('  |') +
+        chalk.white.bold('            DEPLOYING TOKEN               ') +
+        chalk.cyan('|')
+    );
     console.log(chalk.cyan('  +------------------------------------------+'));
     console.log('');
-    
+
     // Only animate in TTY mode
     if (ENABLE_ANIMATIONS) {
       this.interval = setInterval(() => this.render(), 200);
@@ -170,16 +178,16 @@ class DeployAnimation {
     this.frameIndex = (this.frameIndex + 1) % SPINNER_FRAMES.length;
     const spinner = SPINNER_FRAMES[this.frameIndex];
     const stepText = this.steps[this.step % this.steps.length];
-    
+
     // Animate dots
     this.dotCount = (this.dotCount + 1) % 4;
     const dots = '.'.repeat(this.dotCount);
-    
+
     // Cycle through steps every 8 frames
     if (this.frameIndex === 0) {
       this.step = (this.step + 1) % this.steps.length;
     }
-    
+
     process.stdout.write(`\r${' '.repeat(60)}\r`);
     process.stdout.write(`  ${chalk.cyan(spinner)} ${chalk.white(stepText)}${dots}`);
   }
@@ -236,7 +244,7 @@ const CLAIM_OPTIONS = [
 
 async function showAnimatedLogo(): Promise<void> {
   console.clear();
-  
+
   const colors = [chalk.cyan, chalk.blue, chalk.magenta, chalk.cyan];
   const lines = [
     '    ██╗   ██╗ ███╗   ███╗ ██╗  ██╗ ███╗   ███╗',
@@ -254,7 +262,7 @@ async function showAnimatedLogo(): Promise<void> {
     console.log(color(lines[i]));
     await sleep(50);
   }
-  
+
   console.log(chalk.gray('    ─────────────────────────────────────────────'));
   await sleep(100);
   console.log(chalk.white.bold('          Token Deployment Terminal'));
@@ -263,7 +271,7 @@ async function showAnimatedLogo(): Promise<void> {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -283,7 +291,7 @@ async function promptTokenAddress(): Promise<`0x${string}` | null> {
   console.log(chalk.gray('  Format: 0x... (42 characters)'));
   console.log(chalk.gray('  Example: 0x1234...abcd'));
   console.log('');
-  
+
   const address = await input({
     message: 'Token address:',
     validate: (v) => {
@@ -292,7 +300,7 @@ async function promptTokenAddress(): Promise<`0x${string}` | null> {
       return true;
     },
   });
-  
+
   return address.trim() as `0x${string}`;
 }
 
@@ -309,36 +317,36 @@ async function collectImageUrl(): Promise<string> {
   console.log(chalk.gray('  Enter image URL or IPFS CID'));
   console.log(chalk.gray('  Supports: http://, https://, ipfs://, Qm..., bafy...'));
   console.log('');
-  
+
   const imageInput = await input({
     message: 'Image:',
     default: '',
     validate: (v) => {
       if (!v) return true; // Allow empty (skip)
       const trimmed = v.trim();
-      
+
       // Check if it's a valid URL
       if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
         return true;
       }
-      
+
       // Check if it's IPFS format
       if (trimmed.startsWith('ipfs://') || trimmed.startsWith('Qm') || trimmed.startsWith('bafy')) {
         return true;
       }
-      
+
       return 'Invalid format. Use URL (http/https) or IPFS CID (Qm.../bafy...)';
     },
   });
-  
+
   if (!imageInput) {
     console.log(chalk.gray('  [i] No image - skipped'));
     return '';
   }
-  
+
   const trimmed = imageInput.trim();
   let finalUrl = trimmed;
-  
+
   // Auto-convert IPFS CID to gateway URL
   if (trimmed.startsWith('Qm') || trimmed.startsWith('bafy')) {
     finalUrl = `ipfs://${trimmed}`;
@@ -349,13 +357,13 @@ async function collectImageUrl(): Promise<string> {
   } else {
     console.log(chalk.green(`  ✓ URL: ${finalUrl}`));
   }
-  
+
   // Show preview link
   const previewUrl = getImagePreviewUrl(finalUrl);
   if (previewUrl) {
     console.log(chalk.gray(`  Preview: ${previewUrl}`));
   }
-  
+
   return finalUrl;
 }
 
@@ -380,7 +388,7 @@ async function showMainMenu(): Promise<string> {
   console.log(chalk.gray('  ─────────────────────────────────────'));
   return await select({
     message: 'Select an option:',
-    choices: MENU_OPTIONS.filter(o => o.value !== 'separator'),
+    choices: MENU_OPTIONS.filter((o) => o.value !== 'separator'),
   });
 }
 
@@ -390,7 +398,7 @@ async function showManageMenu(): Promise<string> {
   console.log(chalk.gray('  ─────────────────────────────────────'));
   return await select({
     message: 'Select an option:',
-    choices: MANAGE_OPTIONS.filter(o => o.value !== 'separator'),
+    choices: MANAGE_OPTIONS.filter((o) => o.value !== 'separator'),
   });
 }
 
@@ -400,7 +408,7 @@ async function showClaimMenu(): Promise<string> {
   console.log(chalk.gray('  ─────────────────────────────────────'));
   return await select({
     message: 'Select an option:',
-    choices: CLAIM_OPTIONS.filter(o => o.value !== 'separator'),
+    choices: CLAIM_OPTIONS.filter((o) => o.value !== 'separator'),
   });
 }
 
@@ -444,24 +452,24 @@ function getEnvConfig() {
     // Wallet
     privateKey: process.env.PRIVATE_KEY || '',
     chainId: Number(process.env.CHAIN_ID) || CHAIN_IDS.BASE,
-    
+
     // Admin & Rewards
     tokenAdmin: process.env.TOKEN_ADMIN || '',
     rewardRecipient: process.env.REWARD_RECIPIENT || '',
     rewardToken: (process.env.REWARD_TOKEN || 'Both') as 'Both' | 'Paired' | 'Clanker',
-    
+
     // Fees
     feeType: (process.env.FEE_TYPE || 'static') as 'static' | 'dynamic',
     clankerFee: Number(process.env.CLANKER_FEE) || 5,
     pairedFee: Number(process.env.PAIRED_FEE) || 5,
-    
+
     // MEV
     mevBlockDelay: Number(process.env.MEV_BLOCK_DELAY) || 8,
-    
+
     // Clanker verification
     interfaceName: process.env.INTERFACE_NAME || 'UMKM Terminal',
     platformName: process.env.PLATFORM_NAME || 'Clanker',
-    
+
     // Token template (optional - for quick deploy)
     tokenName: process.env.TOKEN_NAME || '',
     tokenSymbol: process.env.TOKEN_SYMBOL || '',
@@ -470,7 +478,7 @@ function getEnvConfig() {
     tokenTwitter: process.env.TOKEN_TWITTER || '',
     tokenTelegram: process.env.TOKEN_TELEGRAM || '',
     tokenWebsite: process.env.TOKEN_WEBSITE || '',
-    
+
     // Vanity
     vanitySuffix: process.env.VANITY_SUFFIX || '',
   };
@@ -478,7 +486,7 @@ function getEnvConfig() {
 
 async function collectTokenInfo(): Promise<TokenInfo> {
   const env = getEnvConfig();
-  
+
   // Check required env vars
   if (!env.privateKey) {
     console.log(chalk.red('\n  Error: PRIVATE_KEY not set'));
@@ -508,7 +516,7 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   console.log('');
   console.log(chalk.white.bold('  STEP 2: TOKEN DETAILS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  
+
   if (hasTemplate) {
     console.log(chalk.green('  [i] Template loaded from .env'));
   }
@@ -537,8 +545,10 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   }
 
   // Auto-generate description if not provided
-  const defaultDescription = env.tokenDescription || `${name} ($${symbol}) - A token deployed on ${getChainName(chainId)} via Clanker`;
-  
+  const defaultDescription =
+    env.tokenDescription ||
+    `${name} ($${symbol}) - A token deployed on ${getChainName(chainId)} via Clanker`;
+
   const description = await input({
     message: 'Description:',
     default: defaultDescription,
@@ -585,7 +595,7 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   console.log('');
   console.log(chalk.white.bold('  STEP 4: ADVANCED SETTINGS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  
+
   const customizeAdvanced = await confirm({
     message: 'Customize advanced settings?',
     default: false,
@@ -603,7 +613,7 @@ async function collectTokenInfo(): Promise<TokenInfo> {
     // Admin & Rewards
     console.log('');
     console.log(chalk.gray('  -- Admin & Rewards --'));
-    
+
     const adminInput = await input({
       message: 'Token Admin (0x...):',
       default: tokenAdmin || '(deployer)',
@@ -709,8 +719,8 @@ async function collectTokenInfo(): Promise<TokenInfo> {
 
   // Default vanity mode selection with .env as default
   const defaultVanityChoice = env.vanitySuffix ? 'custom' : 'off';
-  
-  vanityMode = await select({
+
+  vanityMode = (await select({
     message: 'Vanity address mode:',
     choices: [
       { name: 'Off (default Clanker - suffix B07)', value: 'off' as const },
@@ -718,7 +728,7 @@ async function collectTokenInfo(): Promise<TokenInfo> {
       { name: 'Custom suffix (3 chars max)', value: 'custom' as const },
     ],
     default: defaultVanityChoice,
-  }) as VanityMode;
+  })) as VanityMode;
 
   if (vanityMode === 'random') {
     const pattern = getRandomVanityPattern();
@@ -741,7 +751,11 @@ async function collectTokenInfo(): Promise<TokenInfo> {
     console.log(chalk.cyan(`  ✓ Custom suffix: ...${vanitySuffix.toUpperCase()}`));
 
     const estimate = estimateVanityDifficulty(undefined, vanitySuffix);
-    console.log(chalk.gray(`  Estimated: ${formatDuration(estimate.estimatedTimeSeconds)} (~${estimate.estimatedAttempts.toLocaleString()} tries)`));
+    console.log(
+      chalk.gray(
+        `  Estimated: ${formatDuration(estimate.estimatedTimeSeconds)} (~${estimate.estimatedAttempts.toLocaleString()} tries)`
+      )
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -763,22 +777,32 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(`  ${chalk.gray('Name:')}        ${chalk.white(name)}`);
   console.log(`  ${chalk.gray('Symbol:')}      ${chalk.white(symbol)}`);
-  console.log(`  ${chalk.gray('Image:')}       ${image ? chalk.green('✓ Set') : chalk.yellow('○ Empty')}`);
-  console.log(`  ${chalk.gray('Description:')} ${description ? chalk.green('✓ Set') : chalk.gray('○ Empty')}`);
+  console.log(
+    `  ${chalk.gray('Image:')}       ${image ? chalk.green('✓ Set') : chalk.yellow('○ Empty')}`
+  );
+  console.log(
+    `  ${chalk.gray('Description:')} ${description ? chalk.green('✓ Set') : chalk.gray('○ Empty')}`
+  );
   console.log('');
 
   // Chain & Network
   console.log(chalk.cyan('  NETWORK'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(`  ${chalk.gray('Chain:')}       ${chalk.white(getChainName(chainId))}`);
-  console.log(`  ${chalk.gray('Deployer:')}    ${deployerAddress.slice(0, 10)}...${deployerAddress.slice(-8)}`);
+  console.log(
+    `  ${chalk.gray('Deployer:')}    ${deployerAddress.slice(0, 10)}...${deployerAddress.slice(-8)}`
+  );
   console.log('');
 
   // Rewards (Multi-Recipient)
   console.log(chalk.cyan('  REWARDS (Multi-Recipient)'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('[1] Admin (0.1%):')}    ${displayAdmin.slice(0, 10)}...${displayAdmin.slice(-8)}`);
-  console.log(`  ${chalk.gray('[2] Recipient (99.9%):')} ${displayRecipient.slice(0, 10)}...${displayRecipient.slice(-8)}`);
+  console.log(
+    `  ${chalk.gray('[1] Admin (0.1%):')}    ${displayAdmin.slice(0, 10)}...${displayAdmin.slice(-8)}`
+  );
+  console.log(
+    `  ${chalk.gray('[2] Recipient (99.9%):')} ${displayRecipient.slice(0, 10)}...${displayRecipient.slice(-8)}`
+  );
   console.log(`  ${chalk.gray('Reward Token:')}        ${chalk.white(rewardToken)}`);
   console.log('');
 
@@ -796,7 +820,9 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   console.log(`  ${chalk.gray('Interface:')}   ${chalk.white(env.interfaceName)}`);
   console.log(`  ${chalk.gray('Platform:')}    ${chalk.white(env.platformName)}`);
   if (vanitySuffix) {
-    console.log(`  ${chalk.gray('Vanity:')}      ${chalk.white(`...${vanitySuffix.toUpperCase()}`)}`);
+    console.log(
+      `  ${chalk.gray('Vanity:')}      ${chalk.white(`...${vanitySuffix.toUpperCase()}`)}`
+    );
   }
   console.log('');
 
@@ -864,10 +890,10 @@ async function executeDeployment(info: TokenInfo): Promise<DeployResult> {
   const recipientAddress = (info.rewardRecipient || deployer.address) as `0x${string}`;
 
   // Build socials object
-  const socials: { 
+  const socials: {
     website?: string;
     farcaster?: string;
-    twitter?: string; 
+    twitter?: string;
     zora?: string;
     instagram?: string;
   } = {};
@@ -932,7 +958,7 @@ async function showDeployResult(info: TokenInfo, result: DeployResult): Promise<
   console.log(chalk.green.bold('  ║       TOKEN DEPLOYED SUCCESSFULLY     ║'));
   console.log(chalk.green.bold('  ╚═══════════════════════════════════════╝'));
   console.log('');
-  
+
   // Save to local storage for tracking
   if (result.tokenAddress) {
     saveDeployedToken({
@@ -944,25 +970,31 @@ async function showDeployResult(info: TokenInfo, result: DeployResult): Promise<
       txHash: result.txHash,
     });
   }
-  
+
   // Get deployer address for Defined.fi link
   const deployer = new Deployer({
     privateKey: info.privateKey as `0x${string}`,
     chainId: info.chainId,
   });
-  
+
   // Token info - compact
-  console.log(`  ${chalk.white(info.name)} ${chalk.gray(`($${info.symbol})`)} on ${chalk.yellow(chainName)}`);
+  console.log(
+    `  ${chalk.white(info.name)} ${chalk.gray(`($${info.symbol})`)} on ${chalk.yellow(chainName)}`
+  );
   console.log(`  ${chalk.green(result.tokenAddress)}`);
   console.log('');
-  
+
   // Links - compact
   const definedUrl = `https://www.defined.fi/tokens/discover?creatorAddress=${deployer.address}`;
   console.log(`  ${chalk.gray('Defined:')} ${chalk.cyan(definedUrl)}`);
-  console.log(`  ${chalk.gray('Dex:')}     ${chalk.cyan(`https://dexscreener.com/base/${result.tokenAddress}`)}`);
-  console.log(`  ${chalk.gray('Clanker:')} ${chalk.cyan(`https://clanker.world/clanker/${result.tokenAddress}`)}`);
+  console.log(
+    `  ${chalk.gray('Dex:')}     ${chalk.cyan(`https://dexscreener.com/base/${result.tokenAddress}`)}`
+  );
+  console.log(
+    `  ${chalk.gray('Clanker:')} ${chalk.cyan(`https://clanker.world/clanker/${result.tokenAddress}`)}`
+  );
   console.log('');
-  
+
   // QR Code for Defined.fi
   console.log(chalk.white.bold('  SCAN TO VIEW'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
@@ -980,17 +1012,17 @@ async function printQRCode(url: string): Promise<void> {
     console.log(chalk.cyan(`  ${url}`));
     return;
   }
-  
+
   try {
     // Dynamic import for ESM compatibility
     const qrcode = await import('qrcode-terminal');
     const generate = qrcode.default?.generate || qrcode.generate;
-    
+
     if (typeof generate !== 'function') {
       console.log(chalk.cyan(`  ${url}`));
       return;
     }
-    
+
     return new Promise((resolve) => {
       generate(url, { small: true }, (code: string) => {
         const lines = code.split('\n');
@@ -1023,15 +1055,20 @@ async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_c
   console.log(`  ${chalk.gray('Chain:')}     ${getChainName(info.chainId)}`);
   console.log(`  ${chalk.gray('Token:')}     ${info.name} (${info.symbol})`);
   if (info.image) console.log(`  ${chalk.gray('Image:')}     ${info.image.slice(0, 30)}...`);
-  if (info.description) console.log(`  ${chalk.gray('Desc:')}      ${info.description.slice(0, 30)}...`);
-  console.log(`  ${chalk.gray('Fee:')}       ${info.feeType} (${info.clankerFee}%/${info.pairedFee}%)`);
+  if (info.description)
+    console.log(`  ${chalk.gray('Desc:')}      ${info.description.slice(0, 30)}...`);
+  console.log(
+    `  ${chalk.gray('Fee:')}       ${info.feeType} (${info.clankerFee}%/${info.pairedFee}%)`
+  );
   console.log(`  ${chalk.gray('MEV:')}       ${info.mevBlockDelay} blocks`);
   console.log(`  ${chalk.gray('Rewards:')}   ${info.rewardToken}`);
   // Show vanity mode
   if (info.vanityMode === 'off') {
     console.log(`  ${chalk.gray('Vanity:')}    Off (default Clanker B07)`);
   } else if (info.vanityMode === 'random' || info.vanityMode === 'custom') {
-    console.log(`  ${chalk.gray('Vanity:')}    Suffix: ${chalk.yellow(`...${(info.vanitySuffix || '').toUpperCase()}`)}`);
+    console.log(
+      `  ${chalk.gray('Vanity:')}    Suffix: ${chalk.yellow(`...${(info.vanitySuffix || '').toUpperCase()}`)}`
+    );
   }
   console.log('');
 
@@ -1073,7 +1110,10 @@ async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_c
 
       if (result) {
         info.vanitySalt = result.salt;
-        miningAnim.stop(true, `Found in ${result.attempts.toLocaleString()} attempts (${result.timeMs}ms)`);
+        miningAnim.stop(
+          true,
+          `Found in ${result.attempts.toLocaleString()} attempts (${result.timeMs}ms)`
+        );
       } else {
         miningAnim.stop(false, 'Timeout - using random address');
       }
@@ -1081,7 +1121,7 @@ async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_c
       miningAnim.stop(false, 'Mining failed - using random address');
     }
   }
-  
+
   // Deploy with cool animation
   const deployAnim = new DeployAnimation();
   deployAnim.start();
@@ -1092,7 +1132,7 @@ async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_c
     if (result.success && result.tokenAddress) {
       deployAnim.stop(true, 'Token deployed successfully!');
       await showDeployResult(info, result);
-      
+
       // Post-deploy options
       const nextAction = await select({
         message: 'What next?',
@@ -1102,12 +1142,12 @@ async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_c
           { name: 'Back to menu', value: 'menu' },
         ],
       });
-      
+
       return nextAction as 'menu' | 'retry' | 'other_chain';
     } else {
       deployAnim.stop(false, 'Deployment failed');
       showDeployError(result.error || 'Unknown error');
-      
+
       // Retry options
       const nextAction = await select({
         message: 'What next?',
@@ -1117,13 +1157,13 @@ async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_c
           { name: 'Back to menu', value: 'menu' },
         ],
       });
-      
+
       return nextAction as 'menu' | 'retry' | 'other_chain';
     }
   } catch (err) {
     deployAnim.stop(false, 'Deployment failed');
     showDeployError(err instanceof Error ? err.message : String(err));
-    
+
     // Retry options
     const nextAction = await select({
       message: 'What next?',
@@ -1133,7 +1173,7 @@ async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_c
         { name: 'Back to menu', value: 'menu' },
       ],
     });
-    
+
     return nextAction as 'menu' | 'retry' | 'other_chain';
   }
 }
@@ -1142,12 +1182,12 @@ async function selectNewChain(currentChainId: number): Promise<number> {
   console.log('');
   console.log(chalk.white.bold('  SELECT NEW CHAIN'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  
+
   const newChainId = await select({
     message: 'Deploy to:',
-    choices: CHAIN_OPTIONS.filter(c => c.value !== currentChainId),
+    choices: CHAIN_OPTIONS.filter((c) => c.value !== currentChainId),
   });
-  
+
   return newChainId;
 }
 
@@ -1201,19 +1241,25 @@ function showHelp(): void {
 
 async function showSettings(): Promise<void> {
   const env = getEnvConfig();
-  
+
   console.log('');
   console.log(chalk.white.bold('  CURRENT SETTINGS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log('');
-  
+
   const hasKey = !!env.privateKey;
   const hasAdmin = !!process.env.TOKEN_ADMIN;
   const hasRecipient = !!process.env.REWARD_RECIPIENT;
-  
-  console.log(`  ${chalk.gray('PRIVATE_KEY:')}       ${hasKey ? chalk.green('Set') : chalk.red('Not set')}`);
-  console.log(`  ${chalk.gray('TOKEN_ADMIN:')}       ${hasAdmin ? chalk.green(`${process.env.TOKEN_ADMIN?.slice(0, 10)}...`) : chalk.gray('(deployer)')}`);
-  console.log(`  ${chalk.gray('REWARD_RECIPIENT:')}  ${hasRecipient ? chalk.green(`${process.env.REWARD_RECIPIENT?.slice(0, 10)}...`) : chalk.gray('(deployer)')}`);
+
+  console.log(
+    `  ${chalk.gray('PRIVATE_KEY:')}       ${hasKey ? chalk.green('Set') : chalk.red('Not set')}`
+  );
+  console.log(
+    `  ${chalk.gray('TOKEN_ADMIN:')}       ${hasAdmin ? chalk.green(`${process.env.TOKEN_ADMIN?.slice(0, 10)}...`) : chalk.gray('(deployer)')}`
+  );
+  console.log(
+    `  ${chalk.gray('REWARD_RECIPIENT:')}  ${hasRecipient ? chalk.green(`${process.env.REWARD_RECIPIENT?.slice(0, 10)}...`) : chalk.gray('(deployer)')}`
+  );
   console.log(`  ${chalk.gray('REWARD_TOKEN:')}      ${env.rewardToken}`);
   console.log('');
   console.log(`  ${chalk.gray('CHAIN_ID:')}          ${env.chainId}`);
@@ -1222,18 +1268,24 @@ async function showSettings(): Promise<void> {
   console.log(`  ${chalk.gray('PAIRED_FEE:')}        ${env.pairedFee}%`);
   console.log(`  ${chalk.gray('MEV_BLOCK_DELAY:')}   ${env.mevBlockDelay}`);
   console.log('');
-  
+
   // System info
   console.log(chalk.white.bold('  SYSTEM INFO'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Platform:')}          ${PLATFORM_INFO.os}${PLATFORM_INFO.isTermux ? ' (Termux)' : ''}`);
+  console.log(
+    `  ${chalk.gray('Platform:')}          ${PLATFORM_INFO.os}${PLATFORM_INFO.isTermux ? ' (Termux)' : ''}`
+  );
   console.log(`  ${chalk.gray('Node:')}              ${process.version}`);
-  console.log(`  ${chalk.gray('Terminal:')}          ${PLATFORM_INFO.isTTY ? 'Interactive' : 'Non-interactive'}`);
-  console.log(`  ${chalk.gray('Colors:')}            ${PLATFORM_INFO.colorLevel > 0 ? 'Enabled' : 'Disabled'}`);
+  console.log(
+    `  ${chalk.gray('Terminal:')}          ${PLATFORM_INFO.isTTY ? 'Interactive' : 'Non-interactive'}`
+  );
+  console.log(
+    `  ${chalk.gray('Colors:')}            ${PLATFORM_INFO.colorLevel > 0 ? 'Enabled' : 'Disabled'}`
+  );
   console.log('');
   console.log(chalk.gray('  Edit .env file to change settings'));
   console.log('');
-  
+
   await input({ message: 'Press Enter...' });
 }
 
@@ -1243,11 +1295,11 @@ async function showSettings(): Promise<void> {
 
 // Estimated gas cost per deploy (in native token) - varies by chain
 const DEPLOY_GAS_ESTIMATES: Record<number, number> = {
-  8453: 0.0008,    // Base - very cheap
-  1: 0.015,        // Ethereum - expensive
-  42161: 0.0003,   // Arbitrum - very cheap
-  130: 0.0005,     // Unichain - cheap
-  10143: 0.001,    // Monad
+  8453: 0.0008, // Base - very cheap
+  1: 0.015, // Ethereum - expensive
+  42161: 0.0003, // Arbitrum - very cheap
+  130: 0.0005, // Unichain - cheap
+  10143: 0.001, // Monad
 };
 
 // Chain info for wallet display
@@ -1309,28 +1361,27 @@ const CHAIN_INFO: Record<number, ChainInfo> = {
     symbol: 'ETH',
     coingeckoId: 'ethereum',
     explorer: 'https://unichain.blockscout.com',
-    rpcs: [
-      'https://mainnet.unichain.org',
-    ],
+    rpcs: ['https://mainnet.unichain.org'],
   },
   10143: {
     name: 'Monad',
     symbol: 'MON',
     coingeckoId: 'monad',
     explorer: 'https://explorer.monad.xyz',
-    rpcs: [
-      'https://rpc.monad.xyz',
-    ],
+    rpcs: ['https://rpc.monad.xyz'],
   },
 };
 
 // Fetch native token price from CoinGecko API
 async function fetchTokenPrice(coingeckoId: string): Promise<number> {
   try {
-    const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoId}&vs_currencies=usd`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    const data = await response.json() as Record<string, { usd?: number }>;
+    const response = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoId}&vs_currencies=usd`,
+      {
+        signal: AbortSignal.timeout(5000),
+      }
+    );
+    const data = (await response.json()) as Record<string, { usd?: number }>;
     return data[coingeckoId]?.usd || 0;
   } catch {
     return 0;
@@ -1343,37 +1394,43 @@ async function getNativeBalance(address: `0x${string}`, chainId: number): Promis
   const { createPublicClient, http } = await import('viem');
   const { base, mainnet, arbitrum, unichain } = await import('viem/chains');
   const { monad } = await import('../chains/index.js');
-  
+
   const chainInfo = CHAIN_INFO[chainId];
   if (!chainInfo) return 0n;
-  
+
   // Get the correct chain config based on chainId
   const getChainConfig = () => {
     switch (chainId) {
-      case 8453: return base;
-      case 1: return mainnet;
-      case 42161: return arbitrum;
-      case 130: return unichain;
-      case 10143: return monad;
-      default: return null;
+      case 8453:
+        return base;
+      case 1:
+        return mainnet;
+      case 42161:
+        return arbitrum;
+      case 130:
+        return unichain;
+      case 10143:
+        return monad;
+      default:
+        return null;
     }
   };
-  
+
   const chain = getChainConfig();
   if (!chain) return 0n;
-  
+
   for (const rpcUrl of chainInfo.rpcs) {
     try {
-      const publicClient = createPublicClient({ 
-        chain, 
-        transport: http(rpcUrl, { timeout: 8000 }) 
+      const publicClient = createPublicClient({
+        chain,
+        transport: http(rpcUrl, { timeout: 8000 }),
       });
       return await publicClient.getBalance({ address });
     } catch {
       // Try next RPC
     }
   }
-  
+
   throw new Error('All methods failed to fetch balance');
 }
 
@@ -1407,15 +1464,13 @@ function saveDeployedToken(token: DeployedToken): void {
   }
 }
 
-
-
 async function showWalletInfo(): Promise<void> {
   const env = getEnvConfig();
-  
+
   console.log('');
   console.log(chalk.white.bold('  WALLET INFO'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  
+
   if (!env.privateKey) {
     console.log('');
     console.log(chalk.red('  No wallet configured. Set PRIVATE_KEY in .env'));
@@ -1444,7 +1499,7 @@ async function showWalletInfo(): Promise<void> {
     // Fetch balance with timeout
     let balance = 0n;
     let tokenPrice = 0;
-    
+
     try {
       [tokenPrice, balance] = await Promise.all([
         fetchTokenPrice(chainInfo.coingeckoId),
@@ -1474,15 +1529,19 @@ async function showWalletInfo(): Promise<void> {
     // Display balance
     console.log(chalk.cyan(`  ${chainInfo.name.toUpperCase()} BALANCE`));
     console.log(chalk.gray('  ─────────────────────────────────────'));
-    console.log(`  ${chalk.white(nativeAmount.toFixed(6))} ${chainInfo.symbol}  ${chalk.gray('≈')} ${chalk.green(`$${usdAmount.toFixed(2)}`)}`);
+    console.log(
+      `  ${chalk.white(nativeAmount.toFixed(6))} ${chainInfo.symbol}  ${chalk.gray('≈')} ${chalk.green(`$${usdAmount.toFixed(2)}`)}`
+    );
     console.log('');
-    
+
     // Deploy estimation with color
     let deployColor = chalk.green;
     if (estimatedDeploys === 0) deployColor = chalk.red;
     else if (estimatedDeploys < 5) deployColor = chalk.yellow;
-    
-    console.log(`  ${chalk.gray('Est. Deploys:')} ${deployColor(String(estimatedDeploys))} ${chalk.gray(`(~${gasPerDeploy} ${chainInfo.symbol} each)`)}`);
+
+    console.log(
+      `  ${chalk.gray('Est. Deploys:')} ${deployColor(String(estimatedDeploys))} ${chalk.gray(`(~${gasPerDeploy} ${chainInfo.symbol} each)`)}`
+    );
     console.log('');
 
     // Quick link
@@ -1491,10 +1550,12 @@ async function showWalletInfo(): Promise<void> {
     console.log('');
   } catch (err) {
     console.log('');
-    console.log(chalk.red(`  Error: ${err instanceof Error ? err.message : 'Failed to load wallet info'}`));
+    console.log(
+      chalk.red(`  Error: ${err instanceof Error ? err.message : 'Failed to load wallet info'}`)
+    );
     console.log('');
   }
-  
+
   await input({ message: 'Press Enter...' });
 }
 
@@ -1504,7 +1565,7 @@ async function showWalletInfo(): Promise<void> {
 
 async function handleManageAction(action: string): Promise<void> {
   const env = getEnvConfig();
-  
+
   if (!env.privateKey) {
     console.log(chalk.red('\n  No wallet configured. Set PRIVATE_KEY in .env\n'));
     await input({ message: 'Press Enter...' });
@@ -1562,7 +1623,9 @@ async function handleManageAction(action: string): Promise<void> {
             console.log(chalk.red(`\n  [FAIL] ${result.error?.message || 'Unknown error'}\n`));
           }
         } catch (err) {
-          console.log(chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Transaction failed'}\n`));
+          console.log(
+            chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Transaction failed'}\n`)
+          );
         }
       } else {
         console.log(chalk.yellow('\n  [!] Cancelled\n'));
@@ -1613,7 +1676,9 @@ async function handleManageAction(action: string): Promise<void> {
             console.log(chalk.red(`\n  [FAIL] ${result.error?.message || 'Unknown error'}\n`));
           }
         } catch (err) {
-          console.log(chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Transaction failed'}\n`));
+          console.log(
+            chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Transaction failed'}\n`)
+          );
         }
       } else {
         console.log(chalk.yellow('\n  [!] Cancelled\n'));
@@ -1624,10 +1689,10 @@ async function handleManageAction(action: string): Promise<void> {
     case 'update_recipient': {
       // Fetch current rewards first
       console.log(chalk.gray('  Loading reward configuration...'));
-      
+
       try {
         const rewards = await deployer.getRewards(tokenAddress);
-        
+
         if (rewards.length === 0) {
           console.log(chalk.yellow('\n  [!] No rewards configured for this token\n'));
           break;
@@ -1637,7 +1702,7 @@ async function handleManageAction(action: string): Promise<void> {
         console.log('');
         console.log(chalk.white.bold('  CURRENT REWARDS'));
         console.log(chalk.gray('  ─────────────────────────────────────'));
-        
+
         const rewardChoices = rewards.map((r, i) => {
           const tokenType = r.token === 0 ? 'Both' : r.token === 1 ? 'Paired' : 'Clanker';
           const bpsPercent = (r.bps / 100).toFixed(2);
@@ -1695,7 +1760,9 @@ async function handleManageAction(action: string): Promise<void> {
           console.log(chalk.yellow('\n  [!] Cancelled\n'));
         }
       } catch (err) {
-        console.log(chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to load rewards'}\n`));
+        console.log(
+          chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to load rewards'}\n`)
+        );
       }
       break;
     }
@@ -1703,10 +1770,10 @@ async function handleManageAction(action: string): Promise<void> {
     case 'update_admin': {
       // Fetch current rewards first
       console.log(chalk.gray('  Loading reward configuration...'));
-      
+
       try {
         const rewards = await deployer.getRewards(tokenAddress);
-        
+
         if (rewards.length === 0) {
           console.log(chalk.yellow('\n  [!] No rewards configured for this token\n'));
           break;
@@ -1716,7 +1783,7 @@ async function handleManageAction(action: string): Promise<void> {
         console.log('');
         console.log(chalk.white.bold('  CURRENT REWARDS'));
         console.log(chalk.gray('  ─────────────────────────────────────'));
-        
+
         const rewardChoices = rewards.map((r, i) => {
           const tokenType = r.token === 0 ? 'Both' : r.token === 1 ? 'Paired' : 'Clanker';
           const bpsPercent = (r.bps / 100).toFixed(2);
@@ -1774,7 +1841,9 @@ async function handleManageAction(action: string): Promise<void> {
           console.log(chalk.yellow('\n  [!] Cancelled\n'));
         }
       } catch (err) {
-        console.log(chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to load rewards'}\n`));
+        console.log(
+          chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to load rewards'}\n`)
+        );
       }
       break;
     }
@@ -1789,7 +1858,7 @@ async function handleManageAction(action: string): Promise<void> {
 
 async function handleClaimAction(action: string): Promise<void> {
   const env = getEnvConfig();
-  
+
   if (!env.privateKey) {
     console.log(chalk.red('\n  No wallet configured. Set PRIVATE_KEY in .env\n'));
     await input({ message: 'Press Enter...' });
@@ -1819,11 +1888,11 @@ async function handleClaimAction(action: string): Promise<void> {
     case 'claim_fees': {
       // Check available fees first
       console.log(chalk.gray('  Checking available fees...'));
-      
+
       try {
         const available = await deployer.getAvailableFees(tokenAddress, deployer.address);
         const availableEth = Number(available) / 1e18;
-        
+
         if (available === 0n) {
           console.log(chalk.yellow('\n  [!] No fees available to claim\n'));
           break;
@@ -1834,7 +1903,9 @@ async function handleClaimAction(action: string): Promise<void> {
         console.log(chalk.gray('  ─────────────────────────────────────'));
         console.log(`  ${chalk.gray('Token:')}     ${tokenAddress}`);
         console.log(`  ${chalk.gray('Chain:')}     ${getChainName(chainId)}`);
-        console.log(`  ${chalk.gray('Available:')} ${chalk.green(`${availableEth.toFixed(6)} ETH`)}`);
+        console.log(
+          `  ${chalk.gray('Available:')} ${chalk.green(`${availableEth.toFixed(6)} ETH`)}`
+        );
         console.log('');
 
         const confirmClaim = await confirm({
@@ -1854,7 +1925,9 @@ async function handleClaimAction(action: string): Promise<void> {
           console.log(chalk.yellow('\n  [!] Cancelled\n'));
         }
       } catch (err) {
-        console.log(chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to check fees'}\n`));
+        console.log(
+          chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to check fees'}\n`)
+        );
       }
       break;
     }
@@ -1862,10 +1935,10 @@ async function handleClaimAction(action: string): Promise<void> {
     case 'claim_vault': {
       // Check claimable amount first
       console.log(chalk.gray('  Checking vaulted tokens...'));
-      
+
       try {
         const claimable = await deployer.getVaultClaimableAmount(tokenAddress);
-        
+
         if (claimable === 0n) {
           console.log(chalk.yellow('\n  [!] No vaulted tokens available to claim\n'));
           break;
@@ -1878,7 +1951,9 @@ async function handleClaimAction(action: string): Promise<void> {
         console.log(chalk.gray('  ─────────────────────────────────────'));
         console.log(`  ${chalk.gray('Token:')}     ${tokenAddress}`);
         console.log(`  ${chalk.gray('Chain:')}     ${getChainName(chainId)}`);
-        console.log(`  ${chalk.gray('Claimable:')} ${chalk.green(`${claimableFormatted.toLocaleString()} tokens`)}`);
+        console.log(
+          `  ${chalk.gray('Claimable:')} ${chalk.green(`${claimableFormatted.toLocaleString()} tokens`)}`
+        );
         console.log('');
 
         const confirmVault = await confirm({
@@ -1898,14 +1973,16 @@ async function handleClaimAction(action: string): Promise<void> {
           console.log(chalk.yellow('\n  [!] Cancelled\n'));
         }
       } catch (err) {
-        console.log(chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to check vault'}\n`));
+        console.log(
+          chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to check vault'}\n`)
+        );
       }
       break;
     }
 
     case 'check_rewards': {
       console.log(chalk.gray('  Checking rewards...'));
-      
+
       try {
         const [fees, vaultAmount, rewards] = await Promise.all([
           deployer.getAvailableFees(tokenAddress, deployer.address),
@@ -1921,27 +1998,37 @@ async function handleClaimAction(action: string): Promise<void> {
         console.log(chalk.gray('  ─────────────────────────────────────'));
         console.log(`  ${chalk.gray('Token:')}          ${tokenAddress}`);
         console.log(`  ${chalk.gray('Chain:')}          ${getChainName(chainId)}`);
-        console.log(`  ${chalk.gray('Trading Fees:')}   ${fees > 0n ? chalk.green(`${feesEth.toFixed(6)} ETH`) : chalk.gray('0 ETH')}`);
-        console.log(`  ${chalk.gray('Vaulted Tokens:')} ${vaultAmount > 0n ? chalk.green(vaultTokens.toLocaleString()) : chalk.gray('0')}`);
+        console.log(
+          `  ${chalk.gray('Trading Fees:')}   ${fees > 0n ? chalk.green(`${feesEth.toFixed(6)} ETH`) : chalk.gray('0 ETH')}`
+        );
+        console.log(
+          `  ${chalk.gray('Vaulted Tokens:')} ${vaultAmount > 0n ? chalk.green(vaultTokens.toLocaleString()) : chalk.gray('0')}`
+        );
         console.log('');
 
         // Show reward configuration
         if (rewards.length > 0) {
           console.log(chalk.white.bold('  REWARD CONFIGURATION'));
           console.log(chalk.gray('  ─────────────────────────────────────'));
-          
+
           for (let i = 0; i < rewards.length; i++) {
             const r = rewards[i];
             const tokenType = r.token === 0 ? 'Both' : r.token === 1 ? 'Paired' : 'Clanker';
             const bpsPercent = (r.bps / 100).toFixed(2);
-            console.log(`  ${chalk.gray(`[${i}]`)} ${chalk.white(`${bpsPercent}%`)} ${chalk.gray(tokenType)}`);
+            console.log(
+              `  ${chalk.gray(`[${i}]`)} ${chalk.white(`${bpsPercent}%`)} ${chalk.gray(tokenType)}`
+            );
             console.log(`      ${chalk.gray('Recipient:')} ${r.recipient}`);
             console.log(`      ${chalk.gray('Admin:')}     ${r.admin}`);
           }
           console.log('');
         }
       } catch (err) {
-        console.log(chalk.red(`\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to check rewards'}\n`));
+        console.log(
+          chalk.red(
+            `\n  [FAIL] ${err instanceof Error ? err.message : 'Failed to check rewards'}\n`
+          )
+        );
       }
       break;
     }
@@ -1957,7 +2044,7 @@ async function handleClaimAction(action: string): Promise<void> {
 function parseArgs(): TokenInfo {
   const args = process.argv.slice(3); // skip 'deploy'
   const env = getEnvConfig();
-  
+
   let name = '';
   let symbol = '';
   let image = '';
@@ -1972,14 +2059,44 @@ function parseArgs(): TokenInfo {
     const next = args[i + 1];
 
     switch (arg) {
-      case '-n': case '--name': name = next || ''; i++; break;
-      case '-s': case '--symbol': symbol = next || ''; i++; break;
-      case '-i': case '--image': image = next || ''; i++; break;
-      case '-d': case '--desc': description = next || ''; i++; break;
-      case '-c': case '--chain': chainId = Number(next) || 8453; i++; break;
-      case '--vanity-prefix': vanityPrefix = next || ''; vanityMode = 'custom'; i++; break;
-      case '--vanity-suffix': vanitySuffix = next || ''; vanityMode = 'custom'; i++; break;
-      case '--vanity-random': vanityMode = 'random'; break;
+      case '-n':
+      case '--name':
+        name = next || '';
+        i++;
+        break;
+      case '-s':
+      case '--symbol':
+        symbol = next || '';
+        i++;
+        break;
+      case '-i':
+      case '--image':
+        image = next || '';
+        i++;
+        break;
+      case '-d':
+      case '--desc':
+        description = next || '';
+        i++;
+        break;
+      case '-c':
+      case '--chain':
+        chainId = Number(next) || 8453;
+        i++;
+        break;
+      case '--vanity-prefix':
+        vanityPrefix = next || '';
+        vanityMode = 'custom';
+        i++;
+        break;
+      case '--vanity-suffix':
+        vanitySuffix = next || '';
+        vanityMode = 'custom';
+        i++;
+        break;
+      case '--vanity-random':
+        vanityMode = 'random';
+        break;
     }
   }
 
@@ -2001,7 +2118,9 @@ function parseArgs(): TokenInfo {
     image,
     chainId,
     privateKey: env.privateKey,
-    description: description || `${name} ($${symbol}) - A token deployed on ${getChainName(chainId)} via Clanker`,
+    description:
+      description ||
+      `${name} ($${symbol}) - A token deployed on ${getChainName(chainId)} via Clanker`,
     // Social Links
     website: env.tokenWebsite,
     farcaster: process.env.TOKEN_FARCASTER || '',
@@ -2077,15 +2196,15 @@ async function main(): Promise<void> {
         case 'deploy': {
           let tokenInfo = await collectTokenInfo();
           let deployAction: 'menu' | 'retry' | 'other_chain' = 'retry';
-          
+
           while (deployAction !== 'menu') {
             if (deployAction === 'other_chain') {
               const newChainId = await selectNewChain(tokenInfo.chainId);
               tokenInfo = { ...tokenInfo, chainId: newChainId };
             }
-            
+
             deployAction = await deployToken(tokenInfo);
-            
+
             if (deployAction === 'retry') {
               tokenInfo = await collectTokenInfo();
             }

@@ -1,7 +1,7 @@
 /**
  * Multi-Chain Deploy Example
  * Deploy same token on multiple chains
- * 
+ *
  * Supported Chains & Features:
  * ┌─────────────┬──────────┬─────────────────┬──────────────┐
  * │ Chain       │ Chain ID │ MEV Protection  │ Dynamic Fees │
@@ -12,18 +12,18 @@
  * │ Unichain    │ 130      │ ✅ Yes          │ ✅ Yes       │
  * │ Monad       │ 10143    │ ❌ No           │ ❌ No        │
  * └─────────────┴──────────┴─────────────────┴──────────────┘
- * 
+ *
  * Note: If a feature is not available, the SDK will automatically
  * fall back to the available option (e.g., static fees instead of dynamic)
  */
 
 import 'dotenv/config';
-import { 
-  createBaseDeployer, 
+import {
+  createArbDeployer,
+  createBaseDeployer,
   createEthDeployer,
-  createArbDeployer, 
-  createUnichainDeployer,
   createMonadDeployer,
+  createUnichainDeployer,
   type SimpleDeployConfig,
 } from '../src/index.js';
 
@@ -46,7 +46,9 @@ async function main() {
   console.log('📦 Deploying on Base...');
   const baseDeployer = createBaseDeployer();
   const baseResult = await baseDeployer.deploy(tokenConfig);
-  console.log(`   ${baseResult.success ? `✅ ${baseResult.tokenAddress}` : `❌ ${baseResult.error}`}\n`);
+  console.log(
+    `   ${baseResult.success ? `✅ ${baseResult.tokenAddress}` : `❌ ${baseResult.error}`}\n`
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // Deploy on Ethereum
@@ -54,7 +56,9 @@ async function main() {
   console.log('📦 Deploying on Ethereum...');
   const ethDeployer = createEthDeployer();
   const ethResult = await ethDeployer.deploy(tokenConfig);
-  console.log(`   ${ethResult.success ? `✅ ${ethResult.tokenAddress}` : `❌ ${ethResult.error}`}\n`);
+  console.log(
+    `   ${ethResult.success ? `✅ ${ethResult.tokenAddress}` : `❌ ${ethResult.error}`}\n`
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // Deploy on Arbitrum
@@ -62,7 +66,9 @@ async function main() {
   console.log('📦 Deploying on Arbitrum...');
   const arbDeployer = createArbDeployer();
   const arbResult = await arbDeployer.deploy(tokenConfig);
-  console.log(`   ${arbResult.success ? `✅ ${arbResult.tokenAddress}` : `❌ ${arbResult.error}`}\n`);
+  console.log(
+    `   ${arbResult.success ? `✅ ${arbResult.tokenAddress}` : `❌ ${arbResult.error}`}\n`
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // Deploy on Unichain
@@ -70,19 +76,25 @@ async function main() {
   console.log('📦 Deploying on Unichain...');
   const unichainDeployer = createUnichainDeployer();
   const unichainResult = await unichainDeployer.deploy(tokenConfig);
-  console.log(`   ${unichainResult.success ? `✅ ${unichainResult.tokenAddress}` : `❌ ${unichainResult.error}`}\n`);
+  console.log(
+    `   ${unichainResult.success ? `✅ ${unichainResult.tokenAddress}` : `❌ ${unichainResult.error}`}\n`
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // Deploy on Monad (No MEV protection available)
   // ─────────────────────────────────────────────────────────────────────────
   console.log('📦 Deploying on Monad...');
   const monadDeployer = createMonadDeployer();
-  
+
   // Check chain features before deploying
-  console.log(`   Features: MEV=${monadDeployer.chainFeatures.mevProtection}, DynamicFees=${monadDeployer.chainFeatures.dynamicFees}`);
-  
+  console.log(
+    `   Features: MEV=${monadDeployer.chainFeatures.mevProtection}, DynamicFees=${monadDeployer.chainFeatures.dynamicFees}`
+  );
+
   const monadResult = await monadDeployer.deploy(tokenConfig);
-  console.log(`   ${monadResult.success ? `✅ ${monadResult.tokenAddress}` : `❌ ${monadResult.error}`}\n`);
+  console.log(
+    `   ${monadResult.success ? `✅ ${monadResult.tokenAddress}` : `❌ ${monadResult.error}`}\n`
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // Summary

@@ -30,9 +30,9 @@ console.log('[✓] dist/ exists');
 
 // Check CLI works
 try {
-  const version = execSync('node dist/cli/index.js --version', { 
+  const version = execSync('node dist/cli/index.js --version', {
     cwd: path.join(__dirname, '..'),
-    encoding: 'utf8' 
+    encoding: 'utf8',
   }).trim();
   console.log(`[✓] CLI works: ${version}`);
 } catch {
@@ -47,7 +47,7 @@ console.log('-----------------');
 try {
   execSync('npm pack --dry-run 2>&1 | grep "npm notice" | head -20', {
     cwd: path.join(__dirname, '..'),
-    stdio: 'inherit'
+    stdio: 'inherit',
   });
 } catch {
   // Ignore

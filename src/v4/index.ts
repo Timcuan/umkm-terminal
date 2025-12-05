@@ -175,12 +175,14 @@ export class Clanker {
   /**
    * Get rewards configuration for a token
    */
-  async getRewards(token: `0x${string}`): Promise<Array<{
-    recipient: `0x${string}`;
-    admin: `0x${string}`;
-    bps: number;
-    token: number;
-  }>> {
+  async getRewards(token: `0x${string}`): Promise<
+    Array<{
+      recipient: `0x${string}`;
+      admin: `0x${string}`;
+      bps: number;
+      token: number;
+    }>
+  > {
     const publicClient = this.requirePublicClient();
     const deployment = this.getChainDeployment();
 

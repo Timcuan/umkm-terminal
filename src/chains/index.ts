@@ -28,11 +28,11 @@ export const monad: Chain = {
 // ============================================================================
 
 export const SUPPORTED_CHAINS = {
-  [base.id]: base,           // 8453 - Base
-  [mainnet.id]: mainnet,     // 1 - Ethereum
-  [arbitrum.id]: arbitrum,   // 42161 - Arbitrum
-  [unichain.id]: unichain,   // 130 - Unichain
-  [monad.id]: monad,         // 10143 - Monad
+  [base.id]: base, // 8453 - Base
+  [mainnet.id]: mainnet, // 1 - Ethereum
+  [arbitrum.id]: arbitrum, // 42161 - Arbitrum
+  [unichain.id]: unichain, // 130 - Unichain
+  [monad.id]: monad, // 10143 - Monad
 } as const;
 
 export type SupportedChainId = keyof typeof SUPPORTED_CHAINS;

@@ -14,7 +14,7 @@
  */
 
 import 'dotenv/config';
-import { quickDeploy, CHAIN_IDS } from '../src/index.js';
+import { quickDeploy } from '../src/index.js';
 
 async function main() {
   console.log('🚀 Quick Deploy Example\n');

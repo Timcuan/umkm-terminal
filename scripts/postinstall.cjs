@@ -17,7 +17,7 @@ const cliPath = path.join(__dirname, '..', 'dist', 'cli', 'index.js');
 // Set executable permissions (macOS/Termux)
 function setPermissions() {
   if (!isUnix) return;
-  
+
   try {
     if (fs.existsSync(cliPath)) {
       fs.chmodSync(cliPath, 0o755);
@@ -30,7 +30,7 @@ function setPermissions() {
 // Show simple welcome (ASCII-safe for Termux)
 function showWelcome() {
   const platform = isTermux ? 'Termux' : isMac ? 'macOS' : 'Linux';
-  
+
   console.log('');
   console.log('  +---------------------------------------+');
   console.log('  |     UMKM Terminal - Installed!       |');

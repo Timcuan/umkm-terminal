@@ -7,11 +7,11 @@ import {
   type Account,
   type Address,
   type Chain,
+  encodeAbiParameters,
   type PublicClient,
+  parseEventLogs,
   type Transport,
   type WalletClient,
-  encodeAbiParameters,
-  parseEventLogs,
   zeroAddress,
 } from 'viem';
 import { getWethAddress } from '../chains/index.js';
@@ -142,17 +142,18 @@ function encodeFeeConfig(
 ): { hook: Address; poolData: `0x${string}` } {
   // Check if dynamic fee hook is available
   const dynamicHookAvailable = deployment.contracts.feeDynamicHook !== zeroAddress;
-  
+
   // Use static fees if: no fees config, static type, or dynamic requested but not available
-  const useStatic = !fees || fees.type === 'static' || (fees.type === 'dynamic' && !dynamicHookAvailable);
-  
+  const useStatic =
+    !fees || fees.type === 'static' || (fees.type === 'dynamic' && !dynamicHookAvailable);
+
   if (useStatic) {
     // Get fees from static config or use defaults
     // Fee values are in basis points (100 = 1%, 500 = 5%)
     // Contract expects uniBps (10000 = 1%), so multiply by 100
     let clankerFeeBps = 100; // 1% default
     let pairedFeeBps = 100;
-    
+
     if (fees?.type === 'static') {
       clankerFeeBps = fees.clankerFee ?? 100;
       pairedFeeBps = fees.pairedFee ?? 100;
@@ -169,13 +170,22 @@ function encodeFeeConfig(
 
   // Dynamic fees (fees.type === 'dynamic' is guaranteed here)
   // baseFee/maxFee are in bps, need to convert to uniBps
-  const dynamicFees = fees as { type: 'dynamic'; baseFee?: number; maxFee?: number; referenceTickFilterPeriod?: number; resetPeriod?: number; resetTickFilter?: number; feeControlNumerator?: number; decayFilterBps?: number };
-  
+  const dynamicFees = fees as {
+    type: 'dynamic';
+    baseFee?: number;
+    maxFee?: number;
+    referenceTickFilterPeriod?: number;
+    resetPeriod?: number;
+    resetTickFilter?: number;
+    feeControlNumerator?: number;
+    decayFilterBps?: number;
+  };
+
   return {
     hook: deployment.contracts.feeDynamicHook,
     poolData: encodeAbiParameters(DynamicFeeHookAbi, [
-      (dynamicFees.baseFee ?? 100) * 100,     // bps to uniBps
-      (dynamicFees.maxFee ?? 500) * 100,      // bps to uniBps
+      (dynamicFees.baseFee ?? 100) * 100, // bps to uniBps
+      (dynamicFees.maxFee ?? 500) * 100, // bps to uniBps
       BigInt(dynamicFees.referenceTickFilterPeriod ?? 30),
       BigInt(dynamicFees.resetPeriod ?? 120),
       dynamicFees.resetTickFilter ?? 200,
@@ -195,7 +205,7 @@ function encodeMevConfig(
 ): { mevModule: Address; mevModuleData: `0x${string}` } {
   // Check if MEV module is available on this chain
   const mevModuleAvailable = deployment.contracts.mevModule !== zeroAddress;
-  
+
   if (!mev || mev.type === 'none' || !mevModuleAvailable) {
     return {
       mevModule: zeroAddress,
@@ -335,9 +345,7 @@ export async function deployToken(
   }
 
   if (wallet.chain?.id !== chainId) {
-    throw new Error(
-      `Chain mismatch: token chainId ${chainId} != wallet chain ${wallet.chain?.id}`
-    );
+    throw new Error(`Chain mismatch: token chainId ${chainId} != wallet chain ${wallet.chain?.id}`);
   }
 
   // Get deployment config

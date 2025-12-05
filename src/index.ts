@@ -80,6 +80,9 @@ export {
 
 export type { SupportedChainId } from './chains/index.js';
 export {
+  // Re-exported viem chains
+  arbitrum,
+  base,
   // Chain IDs
   CHAIN_IDS,
   // Utilities
@@ -87,17 +90,14 @@ export {
   getSupportedChainIds,
   getWethAddress,
   isChainSupported,
+  mainnet,
   // Custom chains
   monad,
   // Supported chains map
   SUPPORTED_CHAINS,
+  unichain,
   // WETH addresses
   WETH_ADDRESSES,
-  // Re-exported viem chains
-  arbitrum,
-  base,
-  mainnet,
-  unichain,
 } from './chains/index.js';
 
 // =============================================================================
@@ -146,23 +146,23 @@ export {
 // =============================================================================
 
 export {
-  loadEnvConfig,
-  getRpcUrl,
-  getExplorerUrl,
-  getChainName,
-  validateConfig,
   type ClankerEnvConfig,
+  getChainName,
+  getExplorerUrl,
+  getRpcUrl,
+  loadEnvConfig,
+  validateConfig,
 } from './config/index.js';
 
 export {
-  Deployer,
-  quickDeploy,
-  createDeployer,
-  createBaseDeployer,
-  createEthDeployer,
   createArbDeployer,
-  createUnichainDeployer,
+  createBaseDeployer,
+  createDeployer,
+  createEthDeployer,
   createMonadDeployer,
-  type SimpleDeployConfig,
+  createUnichainDeployer,
+  Deployer,
   type DeployOutput,
+  quickDeploy,
+  type SimpleDeployConfig,
 } from './deployer/index.js';

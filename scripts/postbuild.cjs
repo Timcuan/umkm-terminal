@@ -4,8 +4,8 @@
  * Sets executable permissions on CLI file (Unix only, no-op on Windows)
  */
 
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const cliPath = path.join(__dirname, '..', 'dist', 'cli', 'index.js');
 

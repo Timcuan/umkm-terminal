@@ -158,7 +158,15 @@ export function validateConfig(config: ClankerEnvConfig): string[] {
     errors.push('Private key must be 32 bytes (64 hex chars + 0x)');
   }
 
-  if (![CHAIN_IDS.BASE, CHAIN_IDS.ETHEREUM, CHAIN_IDS.ARBITRUM, CHAIN_IDS.UNICHAIN, CHAIN_IDS.MONAD].includes(config.chainId)) {
+  if (
+    ![
+      CHAIN_IDS.BASE,
+      CHAIN_IDS.ETHEREUM,
+      CHAIN_IDS.ARBITRUM,
+      CHAIN_IDS.UNICHAIN,
+      CHAIN_IDS.MONAD,
+    ].includes(config.chainId)
+  ) {
     errors.push(`Unsupported chain ID: ${config.chainId}`);
   }
 
