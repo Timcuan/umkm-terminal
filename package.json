@@ -1,0 +1,77 @@
+{
+  "name": "clanker-sdk",
+  "version": "4.25.0",
+  "description": "Multi-chain token deployment SDK for Clanker protocol",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "clanker": "./dist/cli/index.js",
+    "umkm": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./v4": {
+      "types": "./dist/v4/index.d.ts",
+      "import": "./dist/v4/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "install.sh",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node dist/cli/index.js",
+    "build": "tsup",
+    "postbuild": "node scripts/postbuild.cjs",
+    "postinstall": "node scripts/postinstall.cjs",
+    "prepublishOnly": "npm run build",
+    "publish:check": "node scripts/publish.cjs",
+    "dev": "tsup --watch",
+    "lint": "biome check && tsc --noEmit",
+    "lint:fix": "biome check --write && tsc --noEmit",
+    "format": "biome check --write --unsafe",
+    "typecheck": "tsc --noEmit",
+    "clean": "node scripts/clean.cjs"
+  },
+  "keywords": [
+    "clanker",
+    "token",
+    "deployment",
+    "ethereum",
+    "base",
+    "arbitrum",
+    "unichain",
+    "monad",
+    "multi-chain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@inquirer/prompts": "^8.0.2",
+    "chalk": "^5.6.2",
+    "dotenv": "^17.2.3",
+    "ora": "^9.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "viem": "^2.38.5",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.0.0",
+    "@types/node": "^22.14.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

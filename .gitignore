@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output (include in npm, exclude from git)
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Local data
+.deployed-tokens.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Package tarballs
+*.tgz

@@ -1,0 +1,26 @@
+# Source files (dist is included)
+src/
+examples/
+
+# Config files
+tsconfig.json
+tsup.config.ts
+biome.json
+.env
+.env.example
+.deployed-tokens.json
+
+# Documentation (README is included)
+DEPLOY_FLOW.md
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
