@@ -155,6 +155,8 @@ export {
 } from './config/index.js';
 
 export {
+  type ChainName,
+  // Single-chain deployers
   createArbDeployer,
   createBaseDeployer,
   createDeployer,
@@ -163,6 +165,12 @@ export {
   createUnichainDeployer,
   Deployer,
   type DeployOutput,
+  // Multi-chain deployers
+  MultiChainDeployer,
+  type MultiDeployConfig,
+  type MultiDeployResult,
+  type MultiDeploySummary,
+  multiDeploy,
   quickDeploy,
   type SimpleDeployConfig,
 } from './deployer/index.js';
