@@ -73,6 +73,7 @@ export interface BatchDefaults {
   // Fees
   fee?: number; // 1-80%
   mev?: number; // 0-20 blocks
+  feeType?: 'static' | 'dynamic';
 
   // Admin & Rewards
   tokenAdmin?: string;
@@ -149,6 +150,7 @@ export interface GenerateOptions {
   // Defaults
   fee?: number;
   mev?: number;
+  feeType?: 'static' | 'dynamic';
   tokenAdmin?: string;
   rewardRecipient?: string;
 
@@ -200,6 +202,7 @@ export function generateTemplate(count: number, options: GenerateOptions): Batch
     defaults: {
       fee: options.fee || 5,
       mev: options.mev ?? 8,
+      feeType: options.feeType || 'static',
       tokenAdmin: options.tokenAdmin || '',
       rewardRecipient: options.rewardRecipient || '',
       image: options.image || '',

@@ -285,6 +285,94 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ============================================================================
+// Farcaster FID Lookup
+// ============================================================================
+
+interface FarcasterUser {
+  fid: number;
+  username: string;
+  displayName?: string;
+  pfpUrl?: string;
+  bio?: string;
+}
+
+/**
+ * Fetch Farcaster user info by username
+ * Uses Neynar API (free tier available)
+ */
+async function fetchFarcasterUser(username: string): Promise<FarcasterUser | null> {
+  try {
+    // Clean username (remove @ if present)
+    const cleanUsername = username.replace(/^@/, '').trim().toLowerCase();
+    if (!cleanUsername) return null;
+
+    // Try Neynar API (free tier)
+    const response = await fetch(
+      `https://api.neynar.com/v2/farcaster/user/by_username?username=${cleanUsername}`,
+      {
+        headers: {
+          accept: 'application/json',
+          api_key: 'NEYNAR_API_DOCS', // Free public key for docs
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as {
+      user?: {
+        fid: number;
+        username: string;
+        display_name?: string;
+        pfp_url?: string;
+        profile?: { bio?: { text?: string } };
+      };
+    };
+    if (data?.user) {
+      return {
+        fid: data.user.fid,
+        username: data.user.username,
+        displayName: data.user.display_name,
+        pfpUrl: data.user.pfp_url,
+        bio: data.user.profile?.bio?.text,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate and fetch Farcaster info
+ * Returns formatted string with FID if valid
+ */
+async function validateFarcaster(
+  input: string
+): Promise<{ valid: boolean; display: string; fid?: number }> {
+  if (!input || !input.trim()) {
+    return { valid: true, display: '' };
+  }
+
+  const user = await fetchFarcasterUser(input);
+  if (user) {
+    return {
+      valid: true,
+      display: `@${user.username} (FID: ${user.fid})`,
+      fid: user.fid,
+    };
+  }
+
+  // If can't fetch, still allow but mark as unverified
+  return {
+    valid: true,
+    display: `${input} (unverified)`,
+  };
+}
+
 /**
  * Validate Ethereum address format
  */
@@ -595,10 +683,24 @@ async function collectTokenInfo(): Promise<TokenInfo> {
     default: env.tokenWebsite || '',
   });
 
-  const farcaster = await input({
-    message: 'Farcaster:',
+  const farcasterInput = await input({
+    message: 'Farcaster (username):',
     default: process.env.TOKEN_FARCASTER || '',
   });
+
+  // Validate Farcaster and fetch FID
+  let farcaster = farcasterInput;
+  if (farcasterInput) {
+    process.stdout.write(chalk.gray('  Fetching Farcaster info...'));
+    const fcResult = await validateFarcaster(farcasterInput);
+    process.stdout.write(`\r${' '.repeat(40)}\r`);
+    if (fcResult.fid) {
+      console.log(chalk.green(`  ✓ Farcaster: ${fcResult.display}`));
+      farcaster = farcasterInput; // Keep original username
+    } else if (fcResult.display) {
+      console.log(chalk.yellow(`  ! ${fcResult.display}`));
+    }
+  }
 
   const twitter = await input({
     message: 'Twitter/X:',
@@ -2462,10 +2564,24 @@ async function generateBatchTemplate(): Promise<void> {
     default: env.tokenDiscord || '',
   });
 
-  const farcaster = await input({
-    message: 'Farcaster:',
+  const farcasterInput = await input({
+    message: 'Farcaster (username):',
     default: env.tokenFarcaster || '',
   });
+
+  // Validate Farcaster and fetch FID
+  let farcaster = farcasterInput;
+  if (farcasterInput) {
+    process.stdout.write(chalk.gray('  Fetching Farcaster info...'));
+    const fcResult = await validateFarcaster(farcasterInput);
+    process.stdout.write(`\r${' '.repeat(40)}\r`);
+    if (fcResult.fid) {
+      console.log(chalk.green(`  ✓ Farcaster: ${fcResult.display}`));
+      farcaster = farcasterInput;
+    } else if (fcResult.display) {
+      console.log(chalk.yellow(`  ! ${fcResult.display}`));
+    }
+  }
 
   const zora = await input({
     message: 'Zora:',
@@ -2485,24 +2601,52 @@ async function generateBatchTemplate(): Promise<void> {
       : undefined;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Step 5: Admin & Rewards
+  // Step 5: Admin & Rewards (Default + Per-Token Option)
   // ─────────────────────────────────────────────────────────────────────────
   console.log('');
   console.log(chalk.white.bold('  STEP 5: ADMIN & REWARDS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
   const adminInput = await input({
-    message: 'Token Admin (0x...):',
+    message: 'Default Token Admin (0x...):',
     default: env.tokenAdmin || `(deployer: ${deployerAddress.slice(0, 10)}...)`,
   });
   const tokenAdmin = adminInput.startsWith('(deployer') || !adminInput ? '' : adminInput;
 
   const recipientInput = await input({
-    message: 'Reward Recipient (0x...):',
+    message: 'Default Reward Recipient (0x...):',
     default: env.rewardRecipient || '(same as admin)',
   });
   const rewardRecipient =
     recipientInput.startsWith('(same') || !recipientInput ? '' : recipientInput;
+
+  // Ask if user wants custom admin/reward per token
+  const customPerToken = await confirm({
+    message: 'Set different admin/reward for each token?',
+    default: false,
+  });
+
+  // Collect per-token admin/reward if requested
+  const perTokenConfig: Array<{ tokenAdmin?: string; rewardRecipient?: string }> = [];
+  if (customPerToken) {
+    console.log('');
+    console.log(chalk.gray('  Enter custom admin/reward for each token (Enter to use default)'));
+    for (let i = 0; i < count; i++) {
+      console.log(chalk.cyan(`\n  Token ${i + 1}/${count}:`));
+      const tAdmin = await input({
+        message: `  Admin:`,
+        default: tokenAdmin || '(default)',
+      });
+      const tRecipient = await input({
+        message: `  Reward:`,
+        default: rewardRecipient || '(default)',
+      });
+      perTokenConfig.push({
+        tokenAdmin: tAdmin.startsWith('(default') ? undefined : tAdmin || undefined,
+        rewardRecipient: tRecipient.startsWith('(default') ? undefined : tRecipient || undefined,
+      });
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Step 6: Fee Configuration
@@ -2511,15 +2655,33 @@ async function generateBatchTemplate(): Promise<void> {
   console.log(chalk.white.bold('  STEP 6: FEE CONFIGURATION'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
-  const feeInput = await input({
-    message: 'Fee % (1-80):',
-    default: String(env.clankerFee),
-    validate: (v) => {
-      const n = Number(v);
-      return (n >= 1 && n <= 80) || 'Must be 1-80%';
-    },
+  const feeMode = await select({
+    message: 'Fee Mode:',
+    choices: [
+      { name: `Static ${env.clankerFee}% (from .env)`, value: 'static_env' },
+      { name: 'Static Custom (1-80%)', value: 'static_custom' },
+      { name: 'Dynamic (auto-adjust based on volume)', value: 'dynamic' },
+    ],
+    default: 'static_env',
   });
-  const fee = Number(feeInput);
+
+  let fee = env.clankerFee;
+  let feeType: 'static' | 'dynamic' = 'static';
+
+  if (feeMode === 'static_custom') {
+    const feeInput = await input({
+      message: 'Fee % (1-80):',
+      default: String(env.clankerFee),
+      validate: (v) => {
+        const n = Number(v);
+        return (n >= 1 && n <= 80) || 'Must be 1-80%';
+      },
+    });
+    fee = Number(feeInput);
+  } else if (feeMode === 'dynamic') {
+    feeType = 'dynamic';
+    console.log(chalk.gray('  Dynamic fee will auto-adjust based on trading volume'));
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Step 7: MEV Protection
@@ -2594,6 +2756,7 @@ async function generateBatchTemplate(): Promise<void> {
     chain,
     fee,
     mev,
+    feeType,
     image: image || undefined,
     description: description || undefined,
     tokenAdmin: tokenAdmin || undefined,
@@ -2601,6 +2764,20 @@ async function generateBatchTemplate(): Promise<void> {
     socials,
     vault,
   });
+
+  // Apply per-token config if set
+  if (perTokenConfig.length > 0) {
+    for (let i = 0; i < template.tokens.length && i < perTokenConfig.length; i++) {
+      if (perTokenConfig[i].tokenAdmin) {
+        template.tokens[i].tokenAdmin = perTokenConfig[i].tokenAdmin;
+      }
+      const recipientAddr = perTokenConfig[i].rewardRecipient;
+      if (recipientAddr) {
+        // Convert to rewardRecipients array format
+        template.tokens[i].rewardRecipients = [{ address: recipientAddr, allocation: 100 }];
+      }
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Preview & Confirm
@@ -2631,10 +2808,18 @@ async function generateBatchTemplate(): Promise<void> {
 
   console.log(chalk.cyan('  CONFIGURATION'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Fee:')}      ${chalk.white(`${fee}%`)}`);
+  console.log(
+    `  ${chalk.gray('Fee:')}      ${chalk.white(feeType === 'dynamic' ? 'Dynamic' : `${fee}%`)}`
+  );
   console.log(`  ${chalk.gray('MEV:')}      ${chalk.white(`${mev} blocks`)}`);
   console.log(`  ${chalk.gray('Admin:')}    ${chalk.white(tokenAdmin || '(deployer)')}`);
   console.log(`  ${chalk.gray('Reward:')}   ${chalk.white(rewardRecipient || '(admin)')}`);
+  if (perTokenConfig.length > 0) {
+    const customCount = perTokenConfig.filter((c) => c.tokenAdmin || c.rewardRecipient).length;
+    console.log(
+      `  ${chalk.gray('Custom:')}   ${chalk.yellow(`${customCount} tokens with custom admin/reward`)}`
+    );
+  }
   if (vault) {
     console.log(
       `  ${chalk.gray('Vault:')}    ${chalk.green(`✓ ${vault.percentage}% locked ${vault.lockupDays} days`)}`
