@@ -159,8 +159,10 @@ export interface GenerateOptions {
 
   // Vault
   vault?: {
+    enabled?: boolean;
     percentage?: number;
-    durationDays?: number;
+    lockupDays?: number;
+    vestingDays?: number;
   };
 }
 

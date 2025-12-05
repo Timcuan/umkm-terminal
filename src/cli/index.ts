@@ -464,10 +464,16 @@ function getEnvConfig() {
     privateKey: process.env.PRIVATE_KEY || '',
     chainId: Number(process.env.CHAIN_ID) || CHAIN_IDS.BASE,
 
+    // Token Defaults
+    tokenName: process.env.TOKEN_NAME || '',
+    tokenSymbol: process.env.TOKEN_SYMBOL || '',
+    tokenImage: process.env.TOKEN_IMAGE || '',
+    tokenDescription: process.env.TOKEN_DESCRIPTION || '',
+
     // Admin & Rewards
     tokenAdmin: process.env.TOKEN_ADMIN || '',
     rewardRecipient: process.env.REWARD_RECIPIENT || '',
-    rewardToken: (process.env.REWARD_TOKEN || 'Both') as 'Both' | 'Paired' | 'Clanker',
+    rewardToken: (process.env.REWARD_TOKEN || 'Paired') as 'Both' | 'Paired' | 'Clanker',
 
     // Fees
     feeType: (process.env.FEE_TYPE || 'static') as 'static' | 'dynamic',
@@ -477,21 +483,30 @@ function getEnvConfig() {
     // MEV
     mevBlockDelay: Number(process.env.MEV_BLOCK_DELAY) || 8,
 
-    // Clanker verification
-    interfaceName: process.env.INTERFACE_NAME || 'UMKM Terminal',
-    platformName: process.env.PLATFORM_NAME || 'Clanker',
-
-    // Token template (optional - for quick deploy)
-    tokenName: process.env.TOKEN_NAME || '',
-    tokenSymbol: process.env.TOKEN_SYMBOL || '',
-    tokenImage: process.env.TOKEN_IMAGE || '',
-    tokenDescription: process.env.TOKEN_DESCRIPTION || '',
+    // Social Links
+    tokenWebsite: process.env.TOKEN_WEBSITE || '',
     tokenTwitter: process.env.TOKEN_TWITTER || '',
     tokenTelegram: process.env.TOKEN_TELEGRAM || '',
-    tokenWebsite: process.env.TOKEN_WEBSITE || '',
+    tokenDiscord: process.env.TOKEN_DISCORD || '',
+    tokenFarcaster: process.env.TOKEN_FARCASTER || '',
 
     // Vanity
     vanitySuffix: process.env.VANITY_SUFFIX || '',
+
+    // Batch Deploy
+    batchCount: Number(process.env.BATCH_COUNT) || 5,
+    batchDelay: Number(process.env.BATCH_DELAY) || 3,
+    batchRetries: Number(process.env.BATCH_RETRIES) || 2,
+
+    // Vault
+    vaultEnabled: process.env.VAULT_ENABLED === 'true',
+    vaultPercentage: Number(process.env.VAULT_PERCENTAGE) || 10,
+    vaultLockupDays: Number(process.env.VAULT_LOCKUP_DAYS) || 30,
+    vaultVestingDays: Number(process.env.VAULT_VESTING_DAYS) || 0,
+
+    // Clanker verification
+    interfaceName: process.env.INTERFACE_NAME || 'UMKM Terminal',
+    platformName: process.env.PLATFORM_NAME || 'Clanker',
   };
 }
 
@@ -2197,14 +2212,50 @@ async function showBatchDeployMenu(): Promise<void> {
 }
 
 async function generateBatchTemplate(): Promise<void> {
+  const env = getEnvConfig();
+
+  // Check required env vars
+  if (!env.privateKey) {
+    console.log(chalk.red('\n  Error: PRIVATE_KEY not set'));
+    console.log(chalk.gray('  Add PRIVATE_KEY=0x... to your .env file\n'));
+    return;
+  }
+
+  // Get deployer address
+  const deployerAddress = privateKeyToAccount(env.privateKey as `0x${string}`).address;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 1: Network Selection
+  // ─────────────────────────────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.cyan.bold('  Generate Batch Template'));
+  console.log(chalk.white.bold('  STEP 1: SELECT NETWORK'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
-  // Token count
+  const chainIdToName: Record<number, BatchChain> = {
+    8453: 'base',
+    1: 'ethereum',
+    42161: 'arbitrum',
+    130: 'unichain',
+    10143: 'monad',
+  };
+
+  const chainId = await select({
+    message: 'Chain:',
+    choices: CHAIN_OPTIONS,
+    default: env.chainId,
+  });
+  const chain = chainIdToName[chainId] || 'base';
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 2: Batch Count
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  STEP 2: BATCH COUNT'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
   const countStr = await input({
     message: 'How many tokens (1-100):',
-    default: '5',
+    default: String(env.batchCount),
     validate: (v) => {
       const n = parseInt(v);
       if (Number.isNaN(n) || n < 1 || n > 100) return 'Enter 1-100';
@@ -2213,108 +2264,247 @@ async function generateBatchTemplate(): Promise<void> {
   });
   const count = parseInt(countStr);
 
-  // Token name (same for all)
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 3: Token Details
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  STEP 3: TOKEN DETAILS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
   const name = await input({
-    message: 'Token name (same for all tokens):',
-    default: 'My Token',
+    message: 'Token name:',
+    default: env.tokenName || 'My Token',
+    validate: (v) => (v.trim() ? true : 'Name is required'),
   });
 
-  // Token symbol (same for all)
   const symbol = await input({
-    message: 'Token symbol (same for all tokens):',
-    default: 'MTK',
+    message: 'Token symbol:',
+    default: env.tokenSymbol || 'MTK',
+    validate: (v) => {
+      if (!v.trim()) return 'Symbol is required';
+      if (v.length > 10) return 'Max 10 characters';
+      return true;
+    },
   });
 
-  // Chain
-  const chain = (await select({
-    message: 'Target chain:',
-    choices: [
-      { name: 'Base', value: 'base' },
-      { name: 'Ethereum', value: 'ethereum' },
-      { name: 'Arbitrum', value: 'arbitrum' },
-      { name: 'Unichain', value: 'unichain' },
-      { name: 'Monad', value: 'monad' },
-    ],
-    default: 'base',
-  })) as BatchChain;
-
-  // Fee
-  const feeStr = await input({
-    message: 'Fee percentage (1-80):',
-    default: '5',
-  });
-  const fee = parseInt(feeStr) || 5;
-
-  // Image URL
   const image = await input({
-    message: 'Token image URL (optional):',
-    default: '',
+    message: 'Image URL (or IPFS CID):',
+    default: env.tokenImage || '',
   });
 
-  // Description
   const description = await input({
-    message: 'Token description (optional):',
-    default: '',
+    message: 'Description:',
+    default: env.tokenDescription || '',
   });
 
-  // Token admin (optional)
-  const tokenAdmin = await input({
-    message: 'Default token admin (leave empty for deployer):',
-    default: '',
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 4: Social Links
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  STEP 4: SOCIAL LINKS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
+  const website = await input({
+    message: 'Website:',
+    default: env.tokenWebsite || '',
   });
 
-  // Reward recipient (optional)
-  const rewardRecipient = await input({
-    message: 'Default reward recipient (leave empty for admin):',
-    default: '',
+  const twitter = await input({
+    message: 'Twitter:',
+    default: env.tokenTwitter || '',
   });
 
-  // Social links
-  const addSocials = await confirm({
-    message: 'Add social links?',
-    default: false,
+  const telegram = await input({
+    message: 'Telegram:',
+    default: env.tokenTelegram || '',
   });
 
-  let socials:
-    | { website?: string; twitter?: string; telegram?: string; discord?: string }
+  const discord = await input({
+    message: 'Discord:',
+    default: env.tokenDiscord || '',
+  });
+
+  const socials =
+    website || twitter || telegram || discord
+      ? {
+          website: website || undefined,
+          twitter: twitter || undefined,
+          telegram: telegram || undefined,
+          discord: discord || undefined,
+        }
+      : undefined;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 5: Admin & Rewards
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  STEP 5: ADMIN & REWARDS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
+  const adminInput = await input({
+    message: 'Token Admin (0x...):',
+    default: env.tokenAdmin || `(deployer: ${deployerAddress.slice(0, 10)}...)`,
+  });
+  const tokenAdmin = adminInput.startsWith('(deployer') || !adminInput ? '' : adminInput;
+
+  const recipientInput = await input({
+    message: 'Reward Recipient (0x...):',
+    default: env.rewardRecipient || '(same as admin)',
+  });
+  const rewardRecipient =
+    recipientInput.startsWith('(same') || !recipientInput ? '' : recipientInput;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 6: Fee Configuration
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  STEP 6: FEE CONFIGURATION'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
+  const feeMode = await select({
+    message: 'Fee Mode:',
+    choices: [
+      { name: `Static ${env.clankerFee}% (from .env)`, value: 'env' },
+      { name: 'Static 5% (recommended)', value: 'static_default' },
+      { name: 'Static Custom (1-80%)', value: 'static_custom' },
+    ],
+    default: 'env',
+  });
+
+  let fee = env.clankerFee;
+  if (feeMode === 'static_default') {
+    fee = 5;
+  } else if (feeMode === 'static_custom') {
+    const customFeeInput = await input({
+      message: 'Custom Fee % (1-80):',
+      default: '5',
+      validate: (v) => {
+        const n = Number(v);
+        return (n >= 1 && n <= 80) || 'Must be 1-80%';
+      },
+    });
+    fee = Number(customFeeInput);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 7: MEV Protection
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  STEP 7: MEV PROTECTION'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
+  const mevInput = await input({
+    message: 'MEV Block Delay (0=off, 8=default):',
+    default: String(env.mevBlockDelay),
+    validate: (v) => {
+      const n = Number(v);
+      return (n >= 0 && n <= 20) || 'Must be 0-20';
+    },
+  });
+  const mev = Number(mevInput);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 8: Vault Settings (Optional)
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  STEP 8: VAULT SETTINGS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
+  const enableVault = await confirm({
+    message: 'Enable vault?',
+    default: env.vaultEnabled,
+  });
+
+  let vault:
+    | { enabled: boolean; percentage: number; lockupDays: number; vestingDays: number }
     | undefined;
-  if (addSocials) {
-    const website = await input({ message: 'Website URL:', default: '' });
-    const twitter = await input({ message: 'Twitter URL:', default: '' });
-    const telegram = await input({ message: 'Telegram URL:', default: '' });
-    const discord = await input({ message: 'Discord URL:', default: '' });
-    socials = {
-      website: website || undefined,
-      twitter: twitter || undefined,
-      telegram: telegram || undefined,
-      discord: discord || undefined,
+  if (enableVault) {
+    const vaultPercentageInput = await input({
+      message: 'Vault percentage (1-90%):',
+      default: String(env.vaultPercentage),
+      validate: (v) => {
+        const n = Number(v);
+        return (n >= 1 && n <= 90) || 'Must be 1-90%';
+      },
+    });
+
+    const vaultLockupInput = await input({
+      message: 'Lockup days (min 7):',
+      default: String(env.vaultLockupDays),
+      validate: (v) => {
+        const n = Number(v);
+        return n >= 7 || 'Must be at least 7 days';
+      },
+    });
+
+    const vaultVestingInput = await input({
+      message: 'Vesting days (0 = instant):',
+      default: String(env.vaultVestingDays),
+    });
+
+    vault = {
+      enabled: true,
+      percentage: Number(vaultPercentageInput),
+      lockupDays: Number(vaultLockupInput),
+      vestingDays: Number(vaultVestingInput) || 0,
     };
   }
 
-  // Generate template
+  // ─────────────────────────────────────────────────────────────────────────
+  // Generate Template
+  // ─────────────────────────────────────────────────────────────────────────
   const template = generateTemplate(count, {
     name,
     symbol,
     chain,
     fee,
+    mev,
     image: image || undefined,
     description: description || undefined,
     tokenAdmin: tokenAdmin || undefined,
     rewardRecipient: rewardRecipient || undefined,
     socials,
+    vault,
   });
 
-  // Show preview
+  // ─────────────────────────────────────────────────────────────────────────
+  // Preview & Confirm
+  // ─────────────────────────────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.white.bold('  Template Preview:'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  console.log(chalk.white.bold('  TEMPLATE PREVIEW'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  console.log('');
+
+  console.log(chalk.cyan('  BATCH INFO'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  Chain:   ${chalk.cyan(chain)}`);
-  console.log(`  Tokens:  ${chalk.cyan(count)}`);
-  console.log(`  Name:    ${chalk.cyan(name)}`);
-  console.log(`  Symbol:  ${chalk.cyan(symbol)}`);
-  console.log(`  Fee:     ${chalk.cyan(`${fee}%`)}`);
-  if (image) console.log(`  Image:   ${chalk.cyan(image.slice(0, 40))}...`);
-  if (tokenAdmin) console.log(`  Admin:   ${chalk.cyan(tokenAdmin)}`);
+  console.log(`  ${chalk.gray('Chain:')}    ${chalk.white(chain)}`);
+  console.log(`  ${chalk.gray('Tokens:')}   ${chalk.white(count)}`);
+  console.log('');
+
+  console.log(chalk.cyan('  TOKEN INFO'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.gray('Name:')}     ${chalk.white(name)}`);
+  console.log(`  ${chalk.gray('Symbol:')}   ${chalk.white(symbol)}`);
+  console.log(
+    `  ${chalk.gray('Image:')}    ${image ? chalk.green('✓ Set') : chalk.yellow('○ Empty')}`
+  );
+  console.log(
+    `  ${chalk.gray('Desc:')}     ${description ? chalk.green('✓ Set') : chalk.gray('○ Empty')}`
+  );
+  console.log('');
+
+  console.log(chalk.cyan('  CONFIGURATION'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.gray('Fee:')}      ${chalk.white(`${fee}%`)}`);
+  console.log(`  ${chalk.gray('MEV:')}      ${chalk.white(`${mev} blocks`)}`);
+  console.log(`  ${chalk.gray('Admin:')}    ${chalk.white(tokenAdmin || '(deployer)')}`);
+  console.log(`  ${chalk.gray('Reward:')}   ${chalk.white(rewardRecipient || '(admin)')}`);
+  if (vault) {
+    console.log(
+      `  ${chalk.gray('Vault:')}    ${chalk.green(`✓ ${vault.percentage}% locked ${vault.lockupDays} days`)}`
+    );
+  }
   console.log('');
 
   // Save location

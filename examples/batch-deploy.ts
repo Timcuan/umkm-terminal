@@ -13,16 +13,16 @@
 
 import 'dotenv/config';
 import {
-  generateTemplate,
-  generateNumberedTemplate,
-  saveTemplate,
-  loadTemplate,
-  validateTemplate,
-  deployTemplate,
-  deployFromFile,
-  saveResults,
-  formatDuration,
   type BatchTemplate,
+  deployFromFile,
+  deployTemplate,
+  formatDuration,
+  generateNumberedTemplate,
+  generateTemplate,
+  loadTemplate,
+  saveResults,
+  saveTemplate,
+  validateTemplate,
 } from '../src/index.js';
 
 // ============================================================================
