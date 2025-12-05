@@ -2525,45 +2525,135 @@ async function generateBatchTemplate(): Promise<void> {
 }
 
 async function deployBatchTemplate(): Promise<void> {
+  const env = getEnvConfig();
+
+  // Check required env vars
+  if (!env.privateKey) {
+    console.log(chalk.red('\n  Error: PRIVATE_KEY not set'));
+    console.log(chalk.gray('  Add PRIVATE_KEY=0x... to your .env file\n'));
+    return;
+  }
+
   console.log('');
   console.log(chalk.cyan.bold('  Deploy from Template'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
-  // Load template
-  const templatePath = await input({
-    message: 'Template file path:',
-    default: './templates/batch-template.json',
-  });
+  // List available templates
+  const templatesDir = path.resolve('./templates');
+  let templateFiles: string[] = [];
+  try {
+    if (fs.existsSync(templatesDir)) {
+      templateFiles = fs
+        .readdirSync(templatesDir)
+        .filter((f) => f.endsWith('.json') && !f.includes('schema'));
+    }
+  } catch {
+    // Ignore errors
+  }
 
+  // Select or input template path
+  let templatePath: string;
+  if (templateFiles.length > 0) {
+    const choices = [
+      ...templateFiles.map((f) => ({ name: f, value: path.join(templatesDir, f) })),
+      { name: chalk.gray('Enter custom path...'), value: 'custom' },
+    ];
+
+    const selected = await select({
+      message: 'Select template:',
+      choices,
+    });
+
+    if (selected === 'custom') {
+      templatePath = await input({
+        message: 'Template file path:',
+        default: './templates/batch-template.json',
+      });
+    } else {
+      templatePath = selected;
+    }
+  } else {
+    templatePath = await input({
+      message: 'Template file path:',
+      default: './templates/batch-template.json',
+    });
+  }
+
+  // Load and validate template
   let template: BatchTemplate;
   try {
     template = loadTemplate(path.resolve(templatePath));
+    console.log(chalk.green('\n  ✓ Template loaded and validated\n'));
   } catch (err) {
-    console.log(chalk.red(`  Error: ${err}`));
+    console.log(chalk.red(`\n  ✗ Template Error:`));
+    console.log(chalk.red(`    ${err}`));
+    console.log('');
     await input({ message: 'Press Enter to continue...' });
     return;
   }
 
-  // Show summary
+  // Get deployer address
+  const deployerAddress = privateKeyToAccount(env.privateKey as `0x${string}`).address;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Show Full Summary
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  console.log(chalk.white.bold('  DEPLOYMENT SUMMARY'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
   console.log('');
-  console.log(chalk.white.bold('  Template Summary:'));
+
+  // Template Info
+  console.log(chalk.cyan('  TEMPLATE'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  Name:    ${chalk.cyan(template.name || 'Unnamed')}`);
-  console.log(`  Chain:   ${chalk.cyan(template.chain || 'base')}`);
-  console.log(`  Tokens:  ${chalk.cyan(template.tokens.length)}`);
-  console.log(`  Fee:     ${chalk.cyan(`${template.defaults?.fee || 5}%`)}`);
-  console.log(`  MEV:     ${chalk.cyan(`${template.defaults?.mev ?? 8} blocks`)}`);
+  console.log(`  ${chalk.gray('Name:')}      ${chalk.white(template.name || 'Unnamed')}`);
+  console.log(`  ${chalk.gray('Chain:')}     ${chalk.white(template.chain || 'base')}`);
+  console.log(`  ${chalk.gray('Tokens:')}    ${chalk.white(template.tokens.length)}`);
   console.log('');
-  console.log('  Tokens:');
-  for (const t of template.tokens.slice(0, 5)) {
-    console.log(chalk.gray(`    - ${t.name} (${t.symbol})`));
+
+  // Defaults
+  const defaults = template.defaults || {};
+  const displayAdmin = defaults.tokenAdmin || deployerAddress;
+  const displayRecipient = defaults.rewardRecipient || displayAdmin;
+
+  console.log(chalk.cyan('  DEFAULTS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.gray('Fee:')}       ${chalk.white(`${defaults.fee || 5}%`)}`);
+  console.log(`  ${chalk.gray('MEV:')}       ${chalk.white(`${defaults.mev ?? 8} blocks`)}`);
+  console.log(`  ${chalk.gray('Admin:')}     ${chalk.white(displayAdmin.slice(0, 10))}...`);
+  console.log(`  ${chalk.gray('Reward:')}    ${chalk.white(displayRecipient.slice(0, 10))}...`);
+  if (defaults.vault?.enabled) {
+    console.log(
+      `  ${chalk.gray('Vault:')}     ${chalk.green(`✓ ${defaults.vault.percentage}% locked ${defaults.vault.lockupDays} days`)}`
+    );
   }
-  if (template.tokens.length > 5) {
-    console.log(chalk.gray(`    ... and ${template.tokens.length - 5} more`));
+  console.log('');
+
+  // Token List
+  console.log(chalk.cyan('  TOKENS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  for (let i = 0; i < Math.min(template.tokens.length, 10); i++) {
+    const t = template.tokens[i];
+    const hasCustom = t.tokenAdmin || t.rewardRecipients?.length || t.fee || t.vault;
+    const customBadge = hasCustom ? chalk.yellow(' [custom]') : '';
+    console.log(chalk.gray(`  ${i + 1}. ${t.name} (${t.symbol})${customBadge}`));
   }
+  if (template.tokens.length > 10) {
+    console.log(chalk.gray(`  ... and ${template.tokens.length - 10} more`));
+  }
+  console.log('');
+
+  // Deploy Settings
+  console.log(chalk.cyan('  DEPLOY SETTINGS'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.gray('Delay:')}     ${chalk.white(`${env.batchDelay}s between deploys`)}`);
+  console.log(
+    `  ${chalk.gray('Retries:')}   ${chalk.white(`${env.batchRetries} attempts on failure`)}`
+  );
+  console.log(`  ${chalk.gray('Deployer:')}  ${chalk.white(deployerAddress.slice(0, 10))}...`);
+  console.log('');
 
   // Confirm
-  console.log('');
   const confirmed = await confirm({
     message: `Deploy ${template.tokens.length} tokens on ${template.chain || 'base'}?`,
     default: true,
@@ -2574,44 +2664,72 @@ async function deployBatchTemplate(): Promise<void> {
     return;
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
   // Deploy
+  // ─────────────────────────────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.cyan.bold('  Deploying...'));
+  console.log(chalk.cyan.bold('  DEPLOYING...'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log('');
 
   const summary = await deployTemplate(template, {
-    delay: 3,
-    retries: 2,
+    delay: env.batchDelay,
+    retries: env.batchRetries,
     onProgress: (current, total, result) => {
       const pct = Math.round((current / total) * 100);
-      const bar = createProgressBar(current / total, 15);
-      const status = result.success ? chalk.green('OK') : chalk.red('FAIL');
-      console.log(`  ${bar} ${pct}% | ${result.symbol}: ${status}`);
+      const bar = createProgressBar(current / total, 20);
+      const status = result.success ? chalk.green('✓') : chalk.red('✗');
+      console.log(`  ${bar} ${pct}%`);
+      console.log(`  ${status} [${current}/${total}] ${result.name} (${result.symbol})`);
       if (result.success && result.address) {
-        console.log(chalk.gray(`       ${result.address}`));
+        console.log(chalk.gray(`    → ${result.address}`));
       } else if (result.error) {
-        console.log(chalk.red(`       ${result.error}`));
+        console.log(chalk.red(`    → ${result.error}`));
       }
+      console.log('');
     },
   });
 
-  // Summary
-  console.log('');
-  console.log(chalk.white.bold('  Deploy Complete!'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  Total:      ${summary.total}`);
-  console.log(`  Success:    ${chalk.green(summary.success)}`);
-  console.log(`  Failed:     ${summary.failed > 0 ? chalk.red(summary.failed) : '0'}`);
-  console.log(`  Duration:   ${batchFormatDuration(summary.duration)}`);
+  // ─────────────────────────────────────────────────────────────────────────
+  // Results
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  console.log(chalk.white.bold('  DEPLOYMENT COMPLETE'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
   console.log('');
 
-  // List deployed
+  console.log(chalk.cyan('  SUMMARY'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.gray('Total:')}     ${summary.total}`);
+  console.log(`  ${chalk.gray('Success:')}   ${chalk.green(summary.success)}`);
+  console.log(
+    `  ${chalk.gray('Failed:')}    ${summary.failed > 0 ? chalk.red(summary.failed) : '0'}`
+  );
+  console.log(`  ${chalk.gray('Duration:')}  ${batchFormatDuration(summary.duration)}`);
+  console.log('');
+
+  // List deployed tokens
   const deployed = summary.results.filter((r) => r.success);
   if (deployed.length > 0) {
-    console.log(chalk.white.bold('  Deployed Tokens:'));
+    console.log(chalk.cyan('  DEPLOYED TOKENS'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
     for (const r of deployed) {
-      console.log(`  ${chalk.cyan(r.symbol)}: ${r.address}`);
+      console.log(`  ${chalk.green('✓')} ${r.name} (${r.symbol})`);
+      console.log(chalk.gray(`    ${r.address}`));
     }
+    console.log('');
+  }
+
+  // List failed tokens
+  const failed = summary.results.filter((r) => !r.success);
+  if (failed.length > 0) {
+    console.log(chalk.cyan('  FAILED TOKENS'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    for (const r of failed) {
+      console.log(`  ${chalk.red('✗')} ${r.name} (${r.symbol})`);
+      console.log(chalk.red(`    ${r.error}`));
+    }
+    console.log('');
   }
 
   // Save results
@@ -2623,9 +2741,24 @@ async function deployBatchTemplate(): Promise<void> {
   if (shouldSave) {
     const resultsPath = `./batch-results-${Date.now()}.json`;
     saveResults(summary, resultsPath);
-    console.log(chalk.green(`\n  ✓ Results saved to ${resultsPath}\n`));
+    console.log(chalk.green(`\n  ✓ Results saved to ${resultsPath}`));
   }
 
+  // Show links for first deployed token
+  if (deployed.length > 0) {
+    const first = deployed[0];
+    console.log('');
+    console.log(chalk.cyan('  LINKS'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(
+      `  ${chalk.gray('Dex:')}      ${chalk.cyan(`https://dexscreener.com/${template.chain || 'base'}/${first.address}`)}`
+    );
+    console.log(
+      `  ${chalk.gray('Clanker:')} ${chalk.cyan(`https://clanker.world/clanker/${first.address}`)}`
+    );
+  }
+
+  console.log('');
   await input({ message: 'Press Enter to continue...' });
 }
 

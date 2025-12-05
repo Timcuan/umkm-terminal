@@ -1,7 +1,7 @@
 {
   "$schema": "./batch-schema.json",
   "name": "Example Batch Deploy",
-  "description": "Full-featured batch deploy template example",
+  "description": "Full-featured batch deploy template - edit tokens below",
   "chain": "base",
   "defaults": {
     "fee": 5,
@@ -14,6 +14,12 @@
       "website": "https://example.com",
       "twitter": "https://twitter.com/example",
       "telegram": "https://t.me/example"
+    },
+    "vault": {
+      "enabled": false,
+      "percentage": 10,
+      "lockupDays": 30,
+      "vestingDays": 0
     }
   },
   "tokens": [
