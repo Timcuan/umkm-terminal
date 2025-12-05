@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Batch Deploy Template",
+  "description": "Full-featured batch deploy template for Clanker tokens",
   "type": "object",
   "required": ["tokens"],
   "properties": {
@@ -20,6 +21,7 @@
     },
     "defaults": {
       "type": "object",
+      "description": "Default values applied to all tokens (can be overridden per token)",
       "properties": {
         "fee": {
           "type": "number",
@@ -44,6 +46,20 @@
           "type": "string",
           "pattern": "^(0x[a-fA-F0-9]{40})?$",
           "description": "Default reward recipient address"
+        },
+        "image": {
+          "type": "string",
+          "description": "Default token image URL"
+        },
+        "description": {
+          "type": "string",
+          "description": "Default token description"
+        },
+        "socials": {
+          "$ref": "#/definitions/socials"
+        },
+        "vault": {
+          "$ref": "#/definitions/vault"
         }
       }
     },
@@ -52,36 +68,96 @@
       "minItems": 1,
       "maxItems": 100,
       "items": {
-        "type": "object",
-        "required": ["name", "symbol"],
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Token name"
-          },
-          "symbol": {
-            "type": "string",
-            "maxLength": 10,
-            "description": "Token symbol (max 10 chars)"
-          },
-          "image": {
-            "type": "string",
-            "description": "Token image URL"
-          },
-          "description": {
-            "type": "string",
-            "description": "Token description"
-          },
-          "tokenAdmin": {
-            "type": "string",
-            "pattern": "^(0x[a-fA-F0-9]{40})?$",
-            "description": "Token admin (overrides default)"
-          },
-          "rewardRecipient": {
-            "type": "string",
-            "pattern": "^(0x[a-fA-F0-9]{40})?$",
-            "description": "Reward recipient (overrides default)"
-          }
+        "$ref": "#/definitions/token"
+      }
+    }
+  },
+  "definitions": {
+    "socials": {
+      "type": "object",
+      "description": "Social media links",
+      "properties": {
+        "website": { "type": "string", "format": "uri" },
+        "twitter": { "type": "string", "format": "uri" },
+        "telegram": { "type": "string", "format": "uri" },
+        "discord": { "type": "string", "format": "uri" },
+        "farcaster": { "type": "string" }
+      }
+    },
+    "vault": {
+      "type": "object",
+      "description": "Token vault settings",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "percentage": { "type": "number", "minimum": 1, "maximum": 90 },
+        "lockupDays": { "type": "number", "minimum": 7 },
+        "vestingDays": { "type": "number", "minimum": 0 }
+      }
+    },
+    "rewardRecipient": {
+      "type": "object",
+      "required": ["address", "allocation"],
+      "properties": {
+        "address": {
+          "type": "string",
+          "pattern": "^0x[a-fA-F0-9]{40}$"
+        },
+        "allocation": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "token": {
+      "type": "object",
+      "required": ["name", "symbol"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Token name"
+        },
+        "symbol": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Token symbol (max 10 chars)"
+        },
+        "image": {
+          "type": "string",
+          "description": "Token image URL (overrides default)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Token description (overrides default)"
+        },
+        "socials": {
+          "$ref": "#/definitions/socials"
+        },
+        "tokenAdmin": {
+          "type": "string",
+          "pattern": "^(0x[a-fA-F0-9]{40})?$",
+          "description": "Token admin (overrides default)"
+        },
+        "rewardRecipients": {
+          "type": "array",
+          "maxItems": 7,
+          "items": { "$ref": "#/definitions/rewardRecipient" },
+          "description": "Reward recipients (allocation must sum to 100)"
+        },
+        "fee": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 80,
+          "description": "Fee percentage (overrides default)"
+        },
+        "mev": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 20,
+          "description": "MEV blocks (overrides default)"
+        },
+        "vault": {
+          "$ref": "#/definitions/vault"
         }
       }
     }

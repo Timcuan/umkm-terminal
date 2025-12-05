@@ -2213,16 +2213,16 @@ async function generateBatchTemplate(): Promise<void> {
   });
   const count = parseInt(countStr);
 
-  // Name prefix
-  const namePrefix = await input({
-    message: 'Token name prefix:',
-    default: 'Token',
+  // Token name (same for all)
+  const name = await input({
+    message: 'Token name (same for all tokens):',
+    default: 'My Token',
   });
 
-  // Symbol prefix
-  const symbolPrefix = await input({
-    message: 'Symbol prefix:',
-    default: 'TKN',
+  // Token symbol (same for all)
+  const symbol = await input({
+    message: 'Token symbol (same for all tokens):',
+    default: 'MTK',
   });
 
   // Chain
@@ -2245,6 +2245,18 @@ async function generateBatchTemplate(): Promise<void> {
   });
   const fee = parseInt(feeStr) || 5;
 
+  // Image URL
+  const image = await input({
+    message: 'Token image URL (optional):',
+    default: '',
+  });
+
+  // Description
+  const description = await input({
+    message: 'Token description (optional):',
+    default: '',
+  });
+
   // Token admin (optional)
   const tokenAdmin = await input({
     message: 'Default token admin (leave empty for deployer):',
@@ -2257,14 +2269,39 @@ async function generateBatchTemplate(): Promise<void> {
     default: '',
   });
 
+  // Social links
+  const addSocials = await confirm({
+    message: 'Add social links?',
+    default: false,
+  });
+
+  let socials:
+    | { website?: string; twitter?: string; telegram?: string; discord?: string }
+    | undefined;
+  if (addSocials) {
+    const website = await input({ message: 'Website URL:', default: '' });
+    const twitter = await input({ message: 'Twitter URL:', default: '' });
+    const telegram = await input({ message: 'Telegram URL:', default: '' });
+    const discord = await input({ message: 'Discord URL:', default: '' });
+    socials = {
+      website: website || undefined,
+      twitter: twitter || undefined,
+      telegram: telegram || undefined,
+      discord: discord || undefined,
+    };
+  }
+
   // Generate template
   const template = generateTemplate(count, {
-    namePrefix,
-    symbolPrefix,
+    name,
+    symbol,
     chain,
     fee,
+    image: image || undefined,
+    description: description || undefined,
     tokenAdmin: tokenAdmin || undefined,
     rewardRecipient: rewardRecipient || undefined,
+    socials,
   });
 
   // Show preview
@@ -2273,16 +2310,12 @@ async function generateBatchTemplate(): Promise<void> {
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(`  Chain:   ${chalk.cyan(chain)}`);
   console.log(`  Tokens:  ${chalk.cyan(count)}`);
+  console.log(`  Name:    ${chalk.cyan(name)}`);
+  console.log(`  Symbol:  ${chalk.cyan(symbol)}`);
   console.log(`  Fee:     ${chalk.cyan(`${fee}%`)}`);
+  if (image) console.log(`  Image:   ${chalk.cyan(image.slice(0, 40))}...`);
   if (tokenAdmin) console.log(`  Admin:   ${chalk.cyan(tokenAdmin)}`);
   console.log('');
-  console.log('  Tokens:');
-  for (const t of template.tokens.slice(0, 5)) {
-    console.log(chalk.gray(`    - ${t.name} (${t.symbol})`));
-  }
-  if (template.tokens.length > 5) {
-    console.log(chalk.gray(`    ... and ${template.tokens.length - 5} more`));
-  }
 
   // Save location
   const filename = await input({
@@ -2295,7 +2328,7 @@ async function generateBatchTemplate(): Promise<void> {
 
   console.log('');
   console.log(chalk.green(`  ✓ Template saved to ${fullPath}`));
-  console.log(chalk.gray('  Edit the file to customize tokens, then deploy.'));
+  console.log(chalk.gray('  Edit the file to customize each token, then deploy.'));
   console.log('');
 
   await input({ message: 'Press Enter to continue...' });

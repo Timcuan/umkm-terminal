@@ -1,32 +1,45 @@
 {
   "$schema": "./batch-schema.json",
-  "name": "My Batch Deploy",
-  "description": "Template for batch deploying multiple tokens",
+  "name": "Example Batch Deploy",
+  "description": "Full-featured batch deploy template example",
   "chain": "base",
   "defaults": {
     "fee": 5,
     "mev": 8,
     "tokenAdmin": "",
-    "rewardRecipient": ""
+    "rewardRecipient": "",
+    "image": "https://example.com/token-image.png",
+    "description": "A token deployed via batch deploy",
+    "socials": {
+      "website": "https://example.com",
+      "twitter": "https://twitter.com/example",
+      "telegram": "https://t.me/example"
+    }
   },
   "tokens": [
     {
-      "name": "Token One",
-      "symbol": "TKN1",
+      "name": "My Token",
+      "symbol": "MTK",
       "image": "",
-      "description": "First token in batch"
+      "description": "",
+      "tokenAdmin": "",
+      "rewardRecipients": []
     },
     {
-      "name": "Token Two",
-      "symbol": "TKN2",
+      "name": "My Token",
+      "symbol": "MTK",
       "image": "",
-      "description": "Second token in batch"
+      "description": "",
+      "tokenAdmin": "",
+      "rewardRecipients": []
     },
     {
-      "name": "Token Three",
-      "symbol": "TKN3",
+      "name": "My Token",
+      "symbol": "MTK",
       "image": "",
-      "description": "Third token in batch"
+      "description": "",
+      "tokenAdmin": "",
+      "rewardRecipients": []
     }
   ]
 }

@@ -169,7 +169,7 @@ export {
 } from './deployer/index.js';
 
 // =============================================================================
-// Batch Deploy (Simple Template-Based)
+// Batch Deploy (Template-Based)
 // =============================================================================
 
 export {
@@ -185,9 +185,14 @@ export {
   // Deploy functions
   deployTemplate,
   formatDuration,
+  type GenerateOptions,
+  generateNumberedTemplate,
   // Template functions
   generateTemplate,
   loadTemplate,
+  type RewardRecipient as BatchRewardRecipient,
   saveResults,
   saveTemplate,
+  type TokenSocials,
+  validateTemplate,
 } from './batch/index.js';

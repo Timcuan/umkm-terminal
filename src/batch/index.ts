@@ -1,6 +1,6 @@
 /**
  * Batch Deploy Module
- * Simple batch deployment for multiple tokens
+ * Full-featured batch deployment for multiple tokens
  */
 
 import * as fs from 'node:fs';
@@ -23,22 +23,73 @@ const CHAIN_IDS: Record<BatchChain, number> = {
   monad: 10143,
 };
 
-/** Token in template */
+/** Social links for token */
+export interface TokenSocials {
+  website?: string;
+  twitter?: string;
+  telegram?: string;
+  discord?: string;
+  farcaster?: string;
+}
+
+/** Reward recipient configuration */
+export interface RewardRecipient {
+  address: string;
+  allocation: number; // 1-100
+}
+
+/** Full token configuration in template */
 export interface BatchToken {
+  // Required
   name: string;
   symbol: string;
+
+  // Metadata
   image?: string;
   description?: string;
+
+  // Social links
+  socials?: TokenSocials;
+
+  // Admin & Rewards
   tokenAdmin?: string;
-  rewardRecipient?: string;
+  rewardRecipients?: RewardRecipient[];
+
+  // Fees (override defaults)
+  fee?: number;
+  mev?: number;
+
+  // Vault settings
+  vault?: {
+    enabled?: boolean;
+    percentage?: number; // 1-90
+    lockupDays?: number; // min 7
+    vestingDays?: number;
+  };
 }
 
 /** Template defaults */
 export interface BatchDefaults {
-  fee?: number;
-  mev?: number;
+  // Fees
+  fee?: number; // 1-80%
+  mev?: number; // 0-20 blocks
+
+  // Admin & Rewards
   tokenAdmin?: string;
   rewardRecipient?: string;
+
+  // Vault
+  vault?: {
+    enabled?: boolean;
+    percentage?: number; // 1-90
+    lockupDays?: number; // min 7
+    vestingDays?: number;
+  };
+
+  // Metadata
+  image?: string;
+  description?: string;
+  socials?: TokenSocials;
 }
 
 /** Batch template structure */
@@ -86,43 +137,117 @@ export interface BatchOptions {
 // Template Functions
 // ============================================================================
 
+/** Generate options */
+export interface GenerateOptions {
+  // Token naming
+  name: string;
+  symbol: string;
+
+  // Chain
+  chain?: BatchChain;
+
+  // Defaults
+  fee?: number;
+  mev?: number;
+  tokenAdmin?: string;
+  rewardRecipient?: string;
+
+  // Metadata (applied to all tokens)
+  image?: string;
+  description?: string;
+  socials?: TokenSocials;
+
+  // Vault
+  vault?: {
+    percentage?: number;
+    durationDays?: number;
+  };
+}
+
 /**
  * Generate a new batch template
+ * All tokens will have the SAME name and symbol (for batch minting same token)
  */
-export function generateTemplate(
-  count: number,
-  options: {
-    namePrefix?: string;
-    symbolPrefix?: string;
-    chain?: BatchChain;
-    fee?: number;
-    mev?: number;
-    tokenAdmin?: string;
-    rewardRecipient?: string;
-  } = {}
-): BatchTemplate {
-  const namePrefix = options.namePrefix || 'Token';
-  const symbolPrefix = options.symbolPrefix || 'TKN';
-
+export function generateTemplate(count: number, options: GenerateOptions): BatchTemplate {
   const tokens: BatchToken[] = [];
-  for (let i = 1; i <= count; i++) {
+
+  for (let i = 0; i < count; i++) {
     tokens.push({
-      name: `${namePrefix} ${i}`,
-      symbol: `${symbolPrefix}${i}`,
-      image: '',
-      description: '',
+      // Same name and symbol for all
+      name: options.name,
+      symbol: options.symbol,
+
+      // Metadata (can be edited per token later)
+      image: options.image || '',
+      description: options.description || '',
+      socials: options.socials ? { ...options.socials } : undefined,
+
+      // Per-token overrides (empty = use defaults)
+      tokenAdmin: '',
+      rewardRecipients: [],
+      fee: undefined,
+      mev: undefined,
+      vault: undefined,
     });
   }
 
   return {
-    name: `Batch ${count} Tokens`,
-    description: `Generated template for ${count} tokens`,
+    name: `Batch ${count}x ${options.symbol}`,
+    description: `Deploy ${count} ${options.name} tokens`,
     chain: options.chain || 'base',
     defaults: {
       fee: options.fee || 5,
       mev: options.mev ?? 8,
       tokenAdmin: options.tokenAdmin || '',
       rewardRecipient: options.rewardRecipient || '',
+      image: options.image || '',
+      description: options.description || '',
+      socials: options.socials,
+      vault: options.vault,
+    },
+    tokens,
+  };
+}
+
+/**
+ * Generate template with different names (numbered)
+ */
+export function generateNumberedTemplate(
+  count: number,
+  options: GenerateOptions & { startIndex?: number }
+): BatchTemplate {
+  const startIndex = options.startIndex ?? 1;
+  const tokens: BatchToken[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const num = startIndex + i;
+    tokens.push({
+      name: `${options.name} ${num}`,
+      symbol: `${options.symbol}${num}`,
+      image: options.image || '',
+      description: options.description || '',
+      socials: options.socials ? { ...options.socials } : undefined,
+      tokenAdmin: '',
+      rewardRecipients: [],
+      fee: undefined,
+      mev: undefined,
+      vault: undefined,
+    });
+  }
+
+  return {
+    name: `Batch ${count} Numbered Tokens`,
+    description: `Deploy ${count} numbered tokens: ${options.name} 1-${count}`,
+    chain: options.chain || 'base',
+    defaults: {
+      fee: options.fee || 5,
+      mev: options.mev ?? 8,
+      tokenAdmin: options.tokenAdmin || '',
+      rewardRecipient: options.rewardRecipient || '',
+      image: options.image || '',
+      description: options.description || '',
+      socials: options.socials,
+      vault: options.vault,
     },
     tokens,
   };
@@ -145,8 +270,16 @@ export function saveTemplate(template: BatchTemplate, filePath: string): void {
 export function loadTemplate(filePath: string): BatchTemplate {
   const content = fs.readFileSync(filePath, 'utf-8');
   const template = JSON.parse(content) as BatchTemplate;
+  return validateTemplate(template);
+}
 
-  // Validate
+/**
+ * Validate template structure
+ */
+export function validateTemplate(template: BatchTemplate): BatchTemplate {
+  const errors: string[] = [];
+
+  // Required fields
   if (!template.tokens || !Array.isArray(template.tokens)) {
     throw new Error('Invalid template: missing tokens array');
   }
@@ -157,7 +290,94 @@ export function loadTemplate(filePath: string): BatchTemplate {
     throw new Error('Invalid template: max 100 tokens allowed');
   }
 
+  // Validate chain
+  if (template.chain && !CHAIN_IDS[template.chain]) {
+    errors.push(`Invalid chain: ${template.chain}`);
+  }
+
+  // Validate defaults
+  const defaults = template.defaults || {};
+  if (defaults.fee !== undefined && (defaults.fee < 1 || defaults.fee > 80)) {
+    errors.push('defaults.fee must be 1-80');
+  }
+  if (defaults.mev !== undefined && (defaults.mev < 0 || defaults.mev > 20)) {
+    errors.push('defaults.mev must be 0-20');
+  }
+  if (defaults.tokenAdmin && !isValidAddress(defaults.tokenAdmin)) {
+    errors.push('defaults.tokenAdmin is not a valid address');
+  }
+  if (defaults.rewardRecipient && !isValidAddress(defaults.rewardRecipient)) {
+    errors.push('defaults.rewardRecipient is not a valid address');
+  }
+
+  // Validate each token
+  for (let i = 0; i < template.tokens.length; i++) {
+    const token = template.tokens[i];
+    const prefix = `tokens[${i}]`;
+
+    if (!token.name || token.name.trim() === '') {
+      errors.push(`${prefix}.name is required`);
+    }
+    if (!token.symbol || token.symbol.trim() === '') {
+      errors.push(`${prefix}.symbol is required`);
+    }
+    if (token.symbol && token.symbol.length > 10) {
+      errors.push(`${prefix}.symbol max 10 characters`);
+    }
+    if (token.tokenAdmin && !isValidAddress(token.tokenAdmin)) {
+      errors.push(`${prefix}.tokenAdmin is not a valid address`);
+    }
+    if (token.fee !== undefined && (token.fee < 1 || token.fee > 80)) {
+      errors.push(`${prefix}.fee must be 1-80`);
+    }
+    if (token.mev !== undefined && (token.mev < 0 || token.mev > 20)) {
+      errors.push(`${prefix}.mev must be 0-20`);
+    }
+
+    // Validate reward recipients
+    if (token.rewardRecipients && token.rewardRecipients.length > 0) {
+      let totalAllocation = 0;
+      for (let j = 0; j < token.rewardRecipients.length; j++) {
+        const r = token.rewardRecipients[j];
+        if (!isValidAddress(r.address)) {
+          errors.push(`${prefix}.rewardRecipients[${j}].address is not valid`);
+        }
+        if (r.allocation < 1 || r.allocation > 100) {
+          errors.push(`${prefix}.rewardRecipients[${j}].allocation must be 1-100`);
+        }
+        totalAllocation += r.allocation;
+      }
+      if (totalAllocation !== 100) {
+        errors.push(
+          `${prefix}.rewardRecipients total allocation must be 100 (got ${totalAllocation})`
+        );
+      }
+    }
+
+    // Validate vault
+    if (token.vault) {
+      if (
+        token.vault.percentage !== undefined &&
+        (token.vault.percentage < 1 || token.vault.percentage > 90)
+      ) {
+        errors.push(`${prefix}.vault.percentage must be 1-90`);
+      }
+      if (token.vault.lockupDays !== undefined && token.vault.lockupDays < 7) {
+        errors.push(`${prefix}.vault.lockupDays must be >= 7`);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Template validation failed:\n  - ${errors.join('\n  - ')}`);
+  }
+
   return template;
+}
+
+/** Check if string is valid Ethereum address */
+function isValidAddress(address: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
 
 // ============================================================================
@@ -171,6 +391,9 @@ export async function deployTemplate(
   template: BatchTemplate,
   options: BatchOptions = {}
 ): Promise<BatchSummary> {
+  // Validate first
+  validateTemplate(template);
+
   const startTime = Date.now();
   const chain = template.chain || 'base';
   const chainId = CHAIN_IDS[chain];
@@ -184,6 +407,10 @@ export async function deployTemplate(
   const defaultMev = defaults.mev ?? 8;
   const defaultAdmin = defaults.tokenAdmin || '';
   const defaultRecipient = defaults.rewardRecipient || '';
+  const defaultImage = defaults.image || '';
+  const defaultDescription = defaults.description || '';
+  const defaultSocials = defaults.socials;
+  const defaultVault = defaults.vault;
 
   // Create deployer
   const deployer = createDeployer(chainId);
@@ -209,25 +436,65 @@ export async function deployTemplate(
       }
 
       try {
-        // Build config
+        // Resolve values (token-specific > defaults > fallback)
         const tokenAdmin = (token.tokenAdmin || defaultAdmin || deployerAddress) as `0x${string}`;
-        const rewardRecipient = (token.rewardRecipient ||
-          defaultRecipient ||
-          tokenAdmin) as `0x${string}`;
+        const fee = token.fee ?? defaultFee;
+        const mev = token.mev ?? defaultMev;
+        const image = token.image || defaultImage;
+        const description = token.description || defaultDescription;
+        const socials = token.socials || defaultSocials;
+        const vault = token.vault || defaultVault;
 
+        // Build reward recipients
+        let rewardRecipients: Array<{ address: `0x${string}`; allocation: number }>;
+        if (token.rewardRecipients && token.rewardRecipients.length > 0) {
+          rewardRecipients = token.rewardRecipients.map((r) => ({
+            address: r.address as `0x${string}`,
+            allocation: r.allocation,
+          }));
+        } else if (defaultRecipient) {
+          rewardRecipients = [{ address: defaultRecipient as `0x${string}`, allocation: 100 }];
+        } else {
+          rewardRecipients = [{ address: tokenAdmin, allocation: 100 }];
+        }
+
+        // Build config
         const config: SimpleDeployConfig = {
           name: token.name,
           symbol: token.symbol,
-          image: token.image,
-          description: token.description,
+          image,
+          description,
           tokenAdmin,
-          mev: defaultMev,
+          mev,
           fees: {
             type: 'static',
-            clankerFee: defaultFee,
-            pairedFee: defaultFee,
+            clankerFee: fee,
+            pairedFee: fee,
           },
-          rewardRecipients: [{ address: rewardRecipient, allocation: 100 }],
+          rewardRecipients,
+          // Social links
+          socials: socials
+            ? {
+                website: socials.website,
+                twitter: socials.twitter,
+                telegram: socials.telegram,
+                discord: socials.discord,
+              }
+            : undefined,
+          // Vault
+          vault: vault?.enabled
+            ? {
+                enabled: true,
+                percentage: vault.percentage || 10,
+                lockupDays: vault.lockupDays || 30,
+                vestingDays: vault.vestingDays || 0,
+              }
+            : undefined,
+          // Context for clanker.world verification
+          context: {
+            interface: 'umkm-terminal',
+            platform: 'batch-deploy',
+          },
         };
 
         // Deploy
