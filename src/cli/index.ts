@@ -2953,21 +2953,121 @@ async function deployBatchTemplate(): Promise<void> {
 
   // Defaults
   const defaults = template.defaults || {};
-  const displayAdmin = defaults.tokenAdmin || deployerAddress;
-  const displayRecipient = defaults.rewardRecipient || displayAdmin;
+  let displayAdmin = defaults.tokenAdmin || deployerAddress;
+  let displayRecipient = defaults.rewardRecipient || displayAdmin;
+  let displayFee = defaults.fee || 5;
+  let displayMev = defaults.mev ?? 8;
+  let displayFeeType = defaults.feeType || 'static';
+  let displayRewardToken = defaults.rewardToken || 'Both';
 
   console.log(chalk.cyan('  DEFAULTS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Fee:')}       ${chalk.white(`${defaults.fee || 5}%`)}`);
-  console.log(`  ${chalk.gray('MEV:')}       ${chalk.white(`${defaults.mev ?? 8} blocks`)}`);
+  console.log(`  ${chalk.gray('Fee:')}       ${chalk.white(`${displayFee}% (${displayFeeType})`)}`);
+  console.log(`  ${chalk.gray('MEV:')}       ${chalk.white(`${displayMev} blocks`)}`);
   console.log(`  ${chalk.gray('Admin:')}     ${chalk.white(displayAdmin.slice(0, 10))}...`);
   console.log(`  ${chalk.gray('Reward:')}    ${chalk.white(displayRecipient.slice(0, 10))}...`);
+  console.log(`  ${chalk.gray('Token:')}     ${chalk.white(displayRewardToken)}`);
   if (defaults.vault?.enabled) {
     console.log(
       `  ${chalk.gray('Vault:')}     ${chalk.green(`✓ ${defaults.vault.percentage}% locked ${defaults.vault.lockupDays} days`)}`
     );
   }
   console.log('');
+
+  // Ask if user wants to customize before deploy
+  const wantCustomize = await confirm({
+    message: 'Customize settings before deploy?',
+    default: false,
+  });
+
+  if (wantCustomize) {
+    console.log('');
+    console.log(chalk.cyan('  CUSTOMIZE SETTINGS'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+
+    // Admin
+    const newAdmin = await input({
+      message: 'Token Admin (0x...):',
+      default: displayAdmin,
+    });
+    if (newAdmin && newAdmin !== displayAdmin) {
+      template.defaults = template.defaults || {};
+      template.defaults.tokenAdmin = newAdmin;
+      displayAdmin = newAdmin;
+    }
+
+    // Reward Recipient
+    const newRecipient = await input({
+      message: 'Reward Recipient (0x...):',
+      default: displayRecipient,
+    });
+    if (newRecipient && newRecipient !== displayRecipient) {
+      template.defaults = template.defaults || {};
+      template.defaults.rewardRecipient = newRecipient;
+      displayRecipient = newRecipient;
+    }
+
+    // Fee
+    const newFee = await input({
+      message: 'Fee % (1-80):',
+      default: String(displayFee),
+      validate: (v) => {
+        const n = Number(v);
+        return (n >= 1 && n <= 80) || 'Must be 1-80%';
+      },
+    });
+    if (newFee) {
+      template.defaults = template.defaults || {};
+      template.defaults.fee = Number(newFee);
+      displayFee = Number(newFee);
+    }
+
+    // Fee Type
+    const newFeeType = await select({
+      message: 'Fee Type:',
+      choices: [
+        { name: 'Static', value: 'static' as const },
+        { name: 'Dynamic', value: 'dynamic' as const },
+      ],
+      default: displayFeeType,
+    });
+    template.defaults = template.defaults || {};
+    template.defaults.feeType = newFeeType;
+    displayFeeType = newFeeType;
+
+    // MEV
+    const newMev = await input({
+      message: 'MEV Block Delay (0=off, 8=default):',
+      default: String(displayMev),
+      validate: (v) => {
+        const n = Number(v);
+        return (n >= 0 && n <= 20) || 'Must be 0-20';
+      },
+    });
+    if (newMev) {
+      template.defaults = template.defaults || {};
+      template.defaults.mev = Number(newMev);
+      displayMev = Number(newMev);
+    }
+
+    // Reward Token
+    const newRewardToken = await select({
+      message: 'Reward Token:',
+      choices: [
+        { name: 'Both (Token + WETH)', value: 'Both' as const },
+        { name: 'Paired (WETH only)', value: 'Paired' as const },
+        { name: 'Clanker (Token only)', value: 'Clanker' as const },
+      ],
+      default: displayRewardToken,
+    });
+    template.defaults = template.defaults || {};
+    template.defaults.rewardToken = newRewardToken;
+    displayRewardToken = newRewardToken;
+
+    console.log('');
+    console.log(chalk.green('  ✓ Settings updated'));
+    console.log('');
+  }
 
   // Token List
   console.log(chalk.cyan('  TOKENS'));

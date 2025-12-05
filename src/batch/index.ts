@@ -68,6 +68,9 @@ export interface BatchToken {
   };
 }
 
+/** Reward token type - same as single deploy */
+export type RewardTokenType = 'Both' | 'Paired' | 'Clanker';
+
 /** Template defaults */
 export interface BatchDefaults {
   // Fees
@@ -78,6 +81,7 @@ export interface BatchDefaults {
   // Admin & Rewards
   tokenAdmin?: string;
   rewardRecipient?: string;
+  rewardToken?: RewardTokenType; // Both | Paired | Clanker
 
   // Vault
   vault?: {
@@ -91,6 +95,10 @@ export interface BatchDefaults {
   image?: string;
   description?: string;
   socials?: TokenSocials;
+
+  // Context for clanker.world verification
+  interfaceName?: string;
+  platformName?: string;
 }
 
 /** Batch template structure */
@@ -153,6 +161,7 @@ export interface GenerateOptions {
   feeType?: 'static' | 'dynamic';
   tokenAdmin?: string;
   rewardRecipient?: string;
+  rewardToken?: RewardTokenType;
 
   // Metadata (applied to all tokens)
   image?: string;
@@ -166,6 +175,10 @@ export interface GenerateOptions {
     lockupDays?: number;
     vestingDays?: number;
   };
+
+  // Context for clanker.world verification
+  interfaceName?: string;
+  platformName?: string;
 }
 
 /**
@@ -205,10 +218,13 @@ export function generateTemplate(count: number, options: GenerateOptions): Batch
       feeType: options.feeType || 'static',
       tokenAdmin: options.tokenAdmin || '',
       rewardRecipient: options.rewardRecipient || '',
+      rewardToken: options.rewardToken || 'Both',
       image: options.image || '',
       description: options.description || '',
       socials: options.socials,
       vault: options.vault,
+      interfaceName: options.interfaceName || 'UMKM Terminal',
+      platformName: options.platformName || 'Clanker',
     },
     tokens,
   };
@@ -410,12 +426,16 @@ export async function deployTemplate(
   const defaults = template.defaults || {};
   const defaultFee = defaults.fee || 5;
   const defaultMev = defaults.mev ?? 8;
+  const defaultFeeType = defaults.feeType || 'static';
   const defaultAdmin = defaults.tokenAdmin || '';
   const defaultRecipient = defaults.rewardRecipient || '';
+  const defaultRewardToken = defaults.rewardToken || 'Both';
   const defaultImage = defaults.image || '';
   const defaultDescription = defaults.description || '';
   const defaultSocials = defaults.socials;
   const defaultVault = defaults.vault;
+  const interfaceName = defaults.interfaceName || 'UMKM Terminal';
+  const platformName = defaults.platformName || 'Clanker';
 
   // Create deployer
   const deployer = createDeployer(chainId);
@@ -450,20 +470,42 @@ export async function deployTemplate(
         const socials = token.socials || defaultSocials;
         const vault = token.vault || defaultVault;
 
-        // Build reward recipients
-        let rewardRecipients: Array<{ address: `0x${string}`; allocation: number }>;
+        // Build reward recipients - SAME AS SINGLE DEPLOY
+        // Multi-recipient setup:
+        // - Recipient 1: Token Admin gets 0.1% (10 bps)
+        // - Recipient 2: Reward Recipient gets 99.9% (9990 bps)
+        const recipientAddress = (defaultRecipient || tokenAdmin) as `0x${string}`;
+
+        let rewardRecipients: Array<{
+          address: `0x${string}`;
+          allocation: number;
+          rewardToken?: 'Both' | 'Paired' | 'Clanker';
+        }>;
+
         if (token.rewardRecipients && token.rewardRecipients.length > 0) {
+          // Use custom recipients from token config
           rewardRecipients = token.rewardRecipients.map((r) => ({
             address: r.address as `0x${string}`,
             allocation: r.allocation,
+            rewardToken: defaultRewardToken,
           }));
-        } else if (defaultRecipient) {
-          rewardRecipients = [{ address: defaultRecipient as `0x${string}`, allocation: 100 }];
         } else {
-          rewardRecipients = [{ address: tokenAdmin, allocation: 100 }];
+          // Use same multi-recipient setup as single deploy
+          rewardRecipients = [
+            {
+              address: tokenAdmin,
+              allocation: 0.1, // 0.1% for token admin
+              rewardToken: defaultRewardToken,
+            },
+            {
+              address: recipientAddress,
+              allocation: 99.9, // 99.9% for reward recipient
+              rewardToken: defaultRewardToken,
+            },
+          ];
         }
 
-        // Build config
+        // Build config - SAME AS SINGLE DEPLOY
         const config: SimpleDeployConfig = {
           name: token.name,
           symbol: token.symbol,
@@ -472,7 +514,7 @@ export async function deployTemplate(
           tokenAdmin,
           mev,
           fees: {
-            type: 'static',
+            type: defaultFeeType,
             clankerFee: fee,
             pairedFee: fee,
           },
@@ -495,10 +537,10 @@ export async function deployTemplate(
                 vestingDays: vault.vestingDays || 0,
               }
             : undefined,
-          // Context for clanker.world verification
+          // Context for clanker.world verification - SAME AS SINGLE DEPLOY
           context: {
-            interface: 'umkm-terminal',
-            platform: 'batch-deploy',
+            interface: interfaceName,
+            platform: platformName,
           },
         };
 
