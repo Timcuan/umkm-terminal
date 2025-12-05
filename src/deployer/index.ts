@@ -795,3 +795,307 @@ export async function multiDeploy(
   }
   return deployer.deployToAll(config);
 }
+
+// ============================================================================
+// Batch Deploy (Multiple Tokens on Single Chain)
+// ============================================================================
+
+/** Single token config for batch deploy */
+export interface BatchTokenConfig {
+  /** Token name */
+  name: string;
+  /** Token symbol */
+  symbol: string;
+  /** Token image URL (optional) */
+  image?: string;
+  /** Token description (optional) */
+  description?: string;
+}
+
+/** Batch deploy options */
+export interface BatchDeployOptions {
+  /** Chain to deploy on (default: 'base') */
+  chain?: ChainName;
+  /** MEV protection blocks (default: 8) */
+  mev?: number;
+  /** Fee percentage (default: 5%) */
+  feePercent?: number;
+  /** Delay between deploys in ms (default: 2000) */
+  delayMs?: number;
+  /** Continue on error (default: true) */
+  continueOnError?: boolean;
+  /** Callback for each deployment */
+  onProgress?: (index: number, total: number, result: BatchDeployResult) => void;
+}
+
+/** Result for each token in batch */
+export interface BatchDeployResult {
+  index: number;
+  name: string;
+  symbol: string;
+  success: boolean;
+  tokenAddress?: `0x${string}`;
+  txHash?: `0x${string}`;
+  explorerUrl?: string;
+  error?: string;
+}
+
+/** Summary of batch deployment */
+export interface BatchDeploySummary {
+  chain: ChainName;
+  chainId: number;
+  results: BatchDeployResult[];
+  successful: number;
+  failed: number;
+  total: number;
+  tokens: Array<{ name: string; symbol: string; address?: `0x${string}` }>;
+}
+
+/**
+ * Batch Deployer
+ * Deploy multiple tokens (1-100) on a single chain
+ *
+ * @example
+ * ```typescript
+ * const batch = new BatchDeployer();
+ *
+ * // Deploy multiple tokens
+ * const results = await batch.deploy([
+ *   { name: 'Token A', symbol: 'TKNA' },
+ *   { name: 'Token B', symbol: 'TKNB' },
+ *   { name: 'Token C', symbol: 'TKNC' },
+ * ]);
+ *
+ * // With options
+ * const results = await batch.deploy(tokens, {
+ *   chain: 'base',
+ *   feePercent: 3,
+ *   delayMs: 3000,
+ *   onProgress: (i, total, result) => {
+ *     console.log(`${i + 1}/${total}: ${result.success ? '✅' : '❌'}`);
+ *   },
+ * });
+ * ```
+ */
+export class BatchDeployer {
+  private privateKey: `0x${string}`;
+
+  constructor(privateKey?: `0x${string}`) {
+    this.privateKey = privateKey || loadEnvConfig().privateKey;
+  }
+
+  /**
+   * Get wallet address
+   */
+  get address(): `0x${string}` {
+    return createDeployer(8453, this.privateKey).address;
+  }
+
+  /**
+   * Deploy multiple tokens on a single chain
+   * @param tokens Array of token configs (1-100)
+   * @param options Deployment options
+   */
+  async deploy(
+    tokens: BatchTokenConfig[],
+    options: BatchDeployOptions = {}
+  ): Promise<BatchDeploySummary> {
+    // Validate token count
+    if (tokens.length === 0) {
+      throw new Error('At least 1 token is required');
+    }
+    if (tokens.length > 100) {
+      throw new Error('Maximum 100 tokens per batch');
+    }
+
+    // Options with defaults
+    const chain = options.chain || 'base';
+    const chainId = CHAIN_NAME_TO_ID[chain];
+    const mev = options.mev ?? 8;
+    const feePercent = options.feePercent ?? 5;
+    const delayMs = options.delayMs ?? 2000;
+    const continueOnError = options.continueOnError ?? true;
+    const onProgress = options.onProgress;
+
+    // Create deployer for chain
+    const deployer = createDeployer(chainId, this.privateKey);
+
+    const results: BatchDeployResult[] = [];
+    const total = tokens.length;
+
+    // Deploy each token
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+
+      try {
+        // Build config
+        const deployConfig: SimpleDeployConfig = {
+          name: token.name,
+          symbol: token.symbol,
+          image: token.image,
+          description: token.description,
+          mev,
+          fees: {
+            type: 'static',
+            clankerFee: feePercent,
+            pairedFee: feePercent,
+          },
+        };
+
+        // Deploy
+        const result = await deployer.deploy(deployConfig);
+
+        const batchResult: BatchDeployResult = {
+          index: i,
+          name: token.name,
+          symbol: token.symbol,
+          success: result.success,
+          tokenAddress: result.tokenAddress,
+          txHash: result.txHash,
+          explorerUrl: result.explorerUrl,
+          error: result.error,
+        };
+
+        results.push(batchResult);
+
+        // Callback
+        if (onProgress) {
+          onProgress(i, total, batchResult);
+        }
+      } catch (err) {
+        const batchResult: BatchDeployResult = {
+          index: i,
+          name: token.name,
+          symbol: token.symbol,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+
+        results.push(batchResult);
+
+        if (onProgress) {
+          onProgress(i, total, batchResult);
+        }
+
+        // Stop on error if configured
+        if (!continueOnError) {
+          break;
+        }
+      }
+
+      // Delay between deploys (except last one)
+      if (i < tokens.length - 1 && delayMs > 0) {
+        await this.sleep(delayMs);
+      }
+    }
+
+    // Build summary
+    const successful = results.filter((r) => r.success).length;
+    return {
+      chain,
+      chainId,
+      results,
+      successful,
+      failed: results.length - successful,
+      total: results.length,
+      tokens: results.map((r) => ({
+        name: r.name,
+        symbol: r.symbol,
+        address: r.tokenAddress,
+      })),
+    };
+  }
+
+  /**
+   * Generate token configs from template
+   * Useful for creating numbered tokens like "Token 1", "Token 2", etc.
+   */
+  generateTokens(
+    count: number,
+    template: {
+      namePrefix: string;
+      symbolPrefix: string;
+      image?: string;
+      description?: string;
+      startIndex?: number;
+    }
+  ): BatchTokenConfig[] {
+    if (count < 1 || count > 100) {
+      throw new Error('Count must be 1-100');
+    }
+
+    const startIndex = template.startIndex ?? 1;
+    const tokens: BatchTokenConfig[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const num = startIndex + i;
+      tokens.push({
+        name: `${template.namePrefix} ${num}`,
+        symbol: `${template.symbolPrefix}${num}`,
+        image: template.image,
+        description: template.description,
+      });
+    }
+
+    return tokens;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
+/**
+ * Quick batch deploy function
+ *
+ * @example
+ * ```typescript
+ * // Deploy 3 tokens
+ * const results = await batchDeploy([
+ *   { name: 'Token A', symbol: 'TKNA' },
+ *   { name: 'Token B', symbol: 'TKNB' },
+ *   { name: 'Token C', symbol: 'TKNC' },
+ * ]);
+ *
+ * // With options
+ * const results = await batchDeploy(tokens, {
+ *   chain: 'arbitrum',
+ *   feePercent: 3,
+ * });
+ * ```
+ */
+export async function batchDeploy(
+  tokens: BatchTokenConfig[],
+  options?: BatchDeployOptions
+): Promise<BatchDeploySummary> {
+  const deployer = new BatchDeployer();
+  return deployer.deploy(tokens, options);
+}
+
+/**
+ * Generate and deploy numbered tokens
+ *
+ * @example
+ * ```typescript
+ * // Deploy 10 tokens: "My Token 1" to "My Token 10"
+ * const results = await batchDeployGenerated(10, {
+ *   namePrefix: 'My Token',
+ *   symbolPrefix: 'MTK',
+ * });
+ * ```
+ */
+export async function batchDeployGenerated(
+  count: number,
+  template: {
+    namePrefix: string;
+    symbolPrefix: string;
+    image?: string;
+    description?: string;
+    startIndex?: number;
+  },
+  options?: BatchDeployOptions
+): Promise<BatchDeploySummary> {
+  const deployer = new BatchDeployer();
+  const tokens = deployer.generateTokens(count, template);
+  return deployer.deploy(tokens, options);
+}

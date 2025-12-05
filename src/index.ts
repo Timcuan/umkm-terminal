@@ -155,6 +155,14 @@ export {
 } from './config/index.js';
 
 export {
+  // Batch deployers (multiple tokens on single chain)
+  BatchDeployer,
+  type BatchDeployOptions,
+  type BatchDeployResult,
+  type BatchDeploySummary,
+  type BatchTokenConfig,
+  batchDeploy,
+  batchDeployGenerated,
   type ChainName,
   // Single-chain deployers
   createArbDeployer,
