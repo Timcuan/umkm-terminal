@@ -1645,11 +1645,17 @@ async function estimateBatchDeployCost(
     if (!chainInfo) return null;
 
     // Get balance and gas price in parallel
-    const [balance, gasPriceResult, tokenPrice] = await Promise.all([
+    const [rpcBalance, gasPriceResult, tokenPrice] = await Promise.all([
       getNativeBalance(account.address, chainId),
       getGasPrice(chainId),
       fetchTokenPrice(chainInfo.coingeckoId),
     ]);
+
+    // If RPC balance is 0, try explorer API as fallback
+    let balance = rpcBalance;
+    if (balance === 0n) {
+      balance = await getBalanceFromExplorer(account.address, chainId);
+    }
 
     // Calculate gas cost
     let gasPrice: bigint;
@@ -1708,12 +1714,15 @@ const CHAIN_INFO: Record<number, ChainInfo> = {
     explorer: 'https://basescan.org',
     explorerApi: 'https://api.basescan.org/api',
     rpcs: [
+      'https://mainnet.base.org',
+      'https://base.publicnode.com',
+      'https://base-rpc.publicnode.com',
       'https://base.llamarpc.com',
       'https://1rpc.io/base',
       'https://base.meowrpc.com',
       'https://base.drpc.org',
       'https://base-mainnet.public.blastapi.io',
-      'https://mainnet.base.org',
+      'https://rpc.ankr.com/base',
     ],
   },
   1: {
@@ -1807,19 +1816,40 @@ async function getNativeBalance(address: `0x${string}`, chainId: number): Promis
   const chain = getChainConfig();
   if (!chain) return 0n;
 
+  // Try each RPC with timeout
   for (const rpcUrl of chainInfo.rpcs) {
     try {
       const publicClient = createPublicClient({
         chain,
-        transport: http(rpcUrl, { timeout: 8000 }),
+        transport: http(rpcUrl, { timeout: 10000, retryCount: 2 }),
       });
-      return await publicClient.getBalance({ address });
-    } catch {
-      // Try next RPC
-    }
+      const balance = await publicClient.getBalance({ address });
+      return balance;
+    } catch {}
   }
 
-  throw new Error('All methods failed to fetch balance');
+  // If all RPCs fail, return 0n instead of throwing
+  return 0n;
+}
+
+// Fetch balance using explorer API as fallback
+async function getBalanceFromExplorer(address: string, chainId: number): Promise<bigint> {
+  const chainInfo = CHAIN_INFO[chainId];
+  if (!chainInfo?.explorerApi) return 0n;
+
+  try {
+    const response = await fetch(
+      `${chainInfo.explorerApi}?module=account&action=balance&address=${address}&tag=latest`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    const data = (await response.json()) as { status: string; result: string };
+    if (data.status === '1' && data.result) {
+      return BigInt(data.result);
+    }
+  } catch {
+    // Ignore
+  }
+  return 0n;
 }
 
 // Local deployed tokens storage path

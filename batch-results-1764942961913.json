@@ -1,0 +1,36 @@
+{
+  "template": "Batch 3x jesse",
+  "chain": "base",
+  "total": 3,
+  "success": 3,
+  "failed": 0,
+  "results": [
+    {
+      "index": 0,
+      "name": "jesse",
+      "symbol": "jesse",
+      "success": true,
+      "address": "0xE8bC97DfdF1eaC07C61e1f74b0Ba550D4f86b157",
+      "txHash": "0x18b5048dc832801ac44ac6b03f3bbc50fa94b718667907c0caec3994324ea29a"
+    },
+    {
+      "index": 1,
+      "name": "jesse",
+      "symbol": "jesse",
+      "success": true,
+      "address": "0x5b737951dF7e1f4B0964B99216DdfE5BC2124c9C",
+      "txHash": "0xe7a19c703740f6b238043c02ef20905159cdc734d7e22bcd99790682c0d30ec1"
+    },
+    {
+      "index": 2,
+      "name": "jesse",
+      "symbol": "jesse",
+      "success": true,
+      "address": "0x4C64F76CF966D11353232521ab3103cb4C6b66c7",
+      "txHash": "0x8d7ed9a42be7761fed5c83ddef4a7b5ef0e2a97b4f45dcbead89f24b4a677228"
+    }
+  ],
+  "duration": 21209,
+  "timestamp": "2025-12-05T13:56:01.913Z",
+  "durationSeconds": 21
+}
