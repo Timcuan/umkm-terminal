@@ -2,10 +2,13 @@
  * Batch Deploy Example
  * Deploy multiple tokens (1-100) on a single chain
  *
- * Perfect for:
- * - Launching multiple tokens at once
- * - Creating token series (Token 1, Token 2, etc.)
- * - Bulk deployment with progress tracking
+ * Features:
+ * - Deploy 1-100 tokens in one batch
+ * - Auto-retry on failure (configurable)
+ * - Resume from specific index
+ * - Progress tracking with callbacks
+ * - Export results to JSON
+ * - Statistics (success rate, duration, etc.)
  */
 
 import 'dotenv/config';
@@ -24,18 +27,25 @@ async function deployTokenArray() {
   console.log('📦 Deploy Token Array\n');
 
   const tokens: BatchTokenConfig[] = [
-    { name: 'Alpha Token', symbol: 'ALPHA', description: 'First token' },
-    { name: 'Beta Token', symbol: 'BETA', description: 'Second token' },
-    { name: 'Gamma Token', symbol: 'GAMMA', description: 'Third token' },
+    { name: 'Alpha Token', symbol: 'ALPHA', description: 'First token', id: 'alpha-1' },
+    { name: 'Beta Token', symbol: 'BETA', description: 'Second token', id: 'beta-1' },
+    { name: 'Gamma Token', symbol: 'GAMMA', description: 'Third token', id: 'gamma-1' },
   ];
 
   const results = await batchDeploy(tokens, {
     chain: 'base',
     feePercent: 5,
-    delayMs: 2000,
+    delayMs: 3000,
+    retries: 2, // Retry 2 times on failure
+    retryDelayMs: 5000, // Wait 5s before retry
     onProgress: (index, total, result) => {
       const status = result.success ? '✅' : '❌';
-      console.log(`  [${index + 1}/${total}] ${status} ${result.symbol}`);
+      console.log(
+        `  [${index + 1}/${total}] ${status} ${result.symbol} (${result.attempts} attempts)`
+      );
+    },
+    onRetry: (_index, attempt, token) => {
+      console.log(`  ⟳ Retrying ${token.symbol} (attempt ${attempt + 1})...`);
     },
   });
 
@@ -175,6 +185,82 @@ async function deployFromData() {
 }
 
 // ============================================================================
+// Method 6: Advanced Features (Retry, Export, Stats)
+// ============================================================================
+
+async function advancedFeatures() {
+  console.log('\n🔧 Advanced Features Demo\n');
+
+  const batch = new BatchDeployer();
+  const tokens: BatchTokenConfig[] = [
+    { name: 'Test Token 1', symbol: 'TEST1', id: 'test-1' },
+    { name: 'Test Token 2', symbol: 'TEST2', id: 'test-2' },
+    { name: 'Test Token 3', symbol: 'TEST3', id: 'test-3' },
+  ];
+
+  // Deploy with all callbacks
+  const results = await batch.deploy(tokens, {
+    chain: 'base',
+    retries: 2,
+    onProgress: (i, total, r) => {
+      console.log(`  [${i + 1}/${total}] ${r.success ? '✅' : '❌'} ${r.symbol}`);
+    },
+    onError: (_i, err, token) => {
+      console.log(`  ⚠️ Error on ${token.symbol}: ${err.message}`);
+    },
+    onRetry: (_i, attempt, token) => {
+      console.log(`  ⟳ Retry #${attempt} for ${token.symbol}`);
+    },
+  });
+
+  // Get statistics
+  const stats = batch.getStats(results);
+  console.log('\n📊 Statistics:');
+  console.log(`  Success Rate: ${stats.successRate}%`);
+  console.log(`  Avg Time/Token: ${stats.avgTimePerToken}ms`);
+  console.log(`  Total Duration: ${stats.totalDuration}`);
+
+  // Export to JSON (for saving/logging)
+  const json = batch.exportResults(results);
+  console.log('\n📄 Exported JSON (first 200 chars):');
+  console.log(`  ${json.substring(0, 200)}...`);
+
+  // Retry failed tokens
+  if (results.failed > 0) {
+    console.log(`\n🔄 Retrying ${results.failed} failed tokens...`);
+    const retryResults = await batch.retryFailed(results, tokens);
+    console.log(`  Retry result: ${retryResults.successful}/${retryResults.total} success`);
+  }
+}
+
+// ============================================================================
+// Method 7: Resume from Index (for interrupted batches)
+// ============================================================================
+
+async function resumeFromIndex() {
+  console.log('\n⏩ Resume from Index Demo\n');
+
+  const batch = new BatchDeployer();
+  const tokens = batch.generateTokens(5, {
+    namePrefix: 'Resume Token',
+    symbolPrefix: 'RSM',
+  });
+
+  // Simulate: Deploy was interrupted at index 2
+  // Resume from index 2 (skip first 2 tokens)
+  console.log('  Resuming from index 2 (skipping first 2 tokens)...\n');
+
+  const results = await batch.deploy(tokens, {
+    startIndex: 2, // Resume from here
+    onProgress: (i, total, r) => {
+      console.log(`  [${i + 1}/${total}] ${r.success ? '✅' : '❌'} ${r.symbol}`);
+    },
+  });
+
+  console.log(`\n✅ Resumed batch: ${results.successful}/${results.total} success`);
+}
+
+// ============================================================================
 // Run Examples
 // ============================================================================
 
@@ -189,6 +275,8 @@ async function main() {
   await usingBatchDeployerClass();
   await deployLargeBatch();
   await deployFromData();
+  await advancedFeatures();
+  await resumeFromIndex();
 }
 
 main().catch(console.error);

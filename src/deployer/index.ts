@@ -810,6 +810,8 @@ export interface BatchTokenConfig {
   image?: string;
   /** Token description (optional) */
   description?: string;
+  /** Custom ID for tracking (optional) */
+  id?: string;
 }
 
 /** Batch deploy options */
@@ -820,17 +822,28 @@ export interface BatchDeployOptions {
   mev?: number;
   /** Fee percentage (default: 5%) */
   feePercent?: number;
-  /** Delay between deploys in ms (default: 2000) */
+  /** Delay between deploys in ms (default: 3000) */
   delayMs?: number;
   /** Continue on error (default: true) */
   continueOnError?: boolean;
+  /** Number of retries for failed deploys (default: 2) */
+  retries?: number;
+  /** Delay before retry in ms (default: 5000) */
+  retryDelayMs?: number;
+  /** Start from index (for resume, default: 0) */
+  startIndex?: number;
   /** Callback for each deployment */
   onProgress?: (index: number, total: number, result: BatchDeployResult) => void;
+  /** Callback on error */
+  onError?: (index: number, error: Error, token: BatchTokenConfig) => void;
+  /** Callback on retry */
+  onRetry?: (index: number, attempt: number, token: BatchTokenConfig) => void;
 }
 
 /** Result for each token in batch */
 export interface BatchDeployResult {
   index: number;
+  id?: string;
   name: string;
   symbol: string;
   success: boolean;
@@ -838,6 +851,8 @@ export interface BatchDeployResult {
   txHash?: `0x${string}`;
   explorerUrl?: string;
   error?: string;
+  attempts: number;
+  timestamp: number;
 }
 
 /** Summary of batch deployment */
@@ -849,6 +864,9 @@ export interface BatchDeploySummary {
   failed: number;
   total: number;
   tokens: Array<{ name: string; symbol: string; address?: `0x${string}` }>;
+  startTime: number;
+  endTime: number;
+  durationMs: number;
 }
 
 /**
@@ -900,6 +918,8 @@ export class BatchDeployer {
     tokens: BatchTokenConfig[],
     options: BatchDeployOptions = {}
   ): Promise<BatchDeploySummary> {
+    const startTime = Date.now();
+
     // Validate token count
     if (tokens.length === 0) {
       throw new Error('At least 1 token is required');
@@ -913,9 +933,14 @@ export class BatchDeployer {
     const chainId = CHAIN_NAME_TO_ID[chain];
     const mev = options.mev ?? 8;
     const feePercent = options.feePercent ?? 5;
-    const delayMs = options.delayMs ?? 2000;
+    const delayMs = options.delayMs ?? 3000;
     const continueOnError = options.continueOnError ?? true;
+    const retries = options.retries ?? 2;
+    const retryDelayMs = options.retryDelayMs ?? 5000;
+    const startIndex = options.startIndex ?? 0;
     const onProgress = options.onProgress;
+    const onError = options.onError;
+    const onRetry = options.onRetry;
 
     // Create deployer for chain
     const deployer = createDeployer(chainId, this.privateKey);
@@ -923,52 +948,89 @@ export class BatchDeployer {
     const results: BatchDeployResult[] = [];
     const total = tokens.length;
 
-    // Deploy each token
-    for (let i = 0; i < tokens.length; i++) {
+    // Deploy each token (starting from startIndex for resume)
+    for (let i = startIndex; i < tokens.length; i++) {
       const token = tokens[i];
+      let lastError: Error | null = null;
+      let attempts = 0;
 
-      try {
-        // Build config
-        const deployConfig: SimpleDeployConfig = {
-          name: token.name,
-          symbol: token.symbol,
-          image: token.image,
-          description: token.description,
-          mev,
-          fees: {
-            type: 'static',
-            clankerFee: feePercent,
-            pairedFee: feePercent,
-          },
-        };
+      // Retry loop
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        attempts = attempt + 1;
 
-        // Deploy
-        const result = await deployer.deploy(deployConfig);
-
-        const batchResult: BatchDeployResult = {
-          index: i,
-          name: token.name,
-          symbol: token.symbol,
-          success: result.success,
-          tokenAddress: result.tokenAddress,
-          txHash: result.txHash,
-          explorerUrl: result.explorerUrl,
-          error: result.error,
-        };
-
-        results.push(batchResult);
-
-        // Callback
-        if (onProgress) {
-          onProgress(i, total, batchResult);
+        // Retry callback
+        if (attempt > 0 && onRetry) {
+          onRetry(i, attempt, token);
         }
-      } catch (err) {
+
+        // Retry delay
+        if (attempt > 0) {
+          await this.sleep(retryDelayMs);
+        }
+
+        try {
+          // Build config
+          const deployConfig: SimpleDeployConfig = {
+            name: token.name,
+            symbol: token.symbol,
+            image: token.image,
+            description: token.description,
+            mev,
+            fees: {
+              type: 'static',
+              clankerFee: feePercent,
+              pairedFee: feePercent,
+            },
+          };
+
+          // Deploy
+          const result = await deployer.deploy(deployConfig);
+
+          if (result.success) {
+            const batchResult: BatchDeployResult = {
+              index: i,
+              id: token.id,
+              name: token.name,
+              symbol: token.symbol,
+              success: true,
+              tokenAddress: result.tokenAddress,
+              txHash: result.txHash,
+              explorerUrl: result.explorerUrl,
+              attempts,
+              timestamp: Date.now(),
+            };
+
+            results.push(batchResult);
+
+            if (onProgress) {
+              onProgress(i, total, batchResult);
+            }
+
+            lastError = null;
+            break; // Success, exit retry loop
+          } else {
+            lastError = new Error(result.error || 'Deploy failed');
+          }
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+
+          if (onError) {
+            onError(i, lastError, token);
+          }
+        }
+      }
+
+      // All retries failed
+      if (lastError) {
         const batchResult: BatchDeployResult = {
           index: i,
+          id: token.id,
           name: token.name,
           symbol: token.symbol,
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: lastError.message,
+          attempts,
+          timestamp: Date.now(),
         };
 
         results.push(batchResult);
@@ -977,7 +1039,6 @@ export class BatchDeployer {
           onProgress(i, total, batchResult);
         }
 
-        // Stop on error if configured
         if (!continueOnError) {
           break;
         }
@@ -988,6 +1049,8 @@ export class BatchDeployer {
         await this.sleep(delayMs);
       }
     }
+
+    const endTime = Date.now();
 
     // Build summary
     const successful = results.filter((r) => r.success).length;
@@ -1003,7 +1066,58 @@ export class BatchDeployer {
         symbol: r.symbol,
         address: r.tokenAddress,
       })),
+      startTime,
+      endTime,
+      durationMs: endTime - startTime,
     };
+  }
+
+  /**
+   * Retry failed tokens from a previous batch
+   */
+  async retryFailed(
+    summary: BatchDeploySummary,
+    tokens: BatchTokenConfig[],
+    options?: BatchDeployOptions
+  ): Promise<BatchDeploySummary> {
+    // Get failed indices
+    const failedIndices = summary.results.filter((r) => !r.success).map((r) => r.index);
+
+    if (failedIndices.length === 0) {
+      return summary; // Nothing to retry
+    }
+
+    // Get failed tokens
+    const failedTokens = failedIndices.map((i) => tokens[i]);
+
+    // Retry deployment
+    return this.deploy(failedTokens, options);
+  }
+
+  /**
+   * Export results to JSON string
+   */
+  exportResults(summary: BatchDeploySummary): string {
+    return JSON.stringify(summary, null, 2);
+  }
+
+  /**
+   * Get deployment statistics
+   */
+  getStats(summary: BatchDeploySummary): {
+    successRate: number;
+    avgTimePerToken: number;
+    totalDuration: string;
+  } {
+    const successRate =
+      summary.total > 0 ? Math.round((summary.successful / summary.total) * 100) : 0;
+    const avgTimePerToken = summary.total > 0 ? Math.round(summary.durationMs / summary.total) : 0;
+    const totalSeconds = Math.round(summary.durationMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const totalDuration = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+
+    return { successRate, avgTimePerToken, totalDuration };
   }
 
   /**
