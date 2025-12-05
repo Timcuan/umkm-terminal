@@ -1559,7 +1559,10 @@ async function showSettings(): Promise<void> {
 // Wallet Info
 // ============================================================================
 
-// Estimated gas cost per deploy (in native token) - varies by chain
+// Estimated gas units per deploy (actual gas used by Clanker deploy)
+const DEPLOY_GAS_UNITS = 850000n; // ~850k gas per token deploy
+
+// Fallback gas cost per deploy (in native token) - used if RPC fails
 const DEPLOY_GAS_ESTIMATES: Record<number, number> = {
   8453: 0.0008, // Base - very cheap
   1: 0.015, // Ethereum - expensive
@@ -1567,6 +1570,125 @@ const DEPLOY_GAS_ESTIMATES: Record<number, number> = {
   130: 0.0005, // Unichain - cheap
   10143: 0.001, // Monad
 };
+
+/**
+ * Get real-time gas price from chain
+ */
+async function getGasPrice(
+  chainId: number
+): Promise<{ gasPrice: bigint; maxFeePerGas?: bigint } | null> {
+  const { createPublicClient, http } = await import('viem');
+  const { base, mainnet, arbitrum, unichain } = await import('viem/chains');
+  const { monad } = await import('../chains/index.js');
+
+  const chainInfo = CHAIN_INFO[chainId];
+  if (!chainInfo) return null;
+
+  const getChainConfig = () => {
+    switch (chainId) {
+      case 8453:
+        return base;
+      case 1:
+        return mainnet;
+      case 42161:
+        return arbitrum;
+      case 130:
+        return unichain;
+      case 10143:
+        return monad;
+      default:
+        return null;
+    }
+  };
+
+  const chain = getChainConfig();
+  if (!chain) return null;
+
+  for (const rpcUrl of chainInfo.rpcs) {
+    try {
+      const publicClient = createPublicClient({
+        chain,
+        transport: http(rpcUrl, { timeout: 5000 }),
+      });
+      const gasPrice = await publicClient.getGasPrice();
+      return { gasPrice };
+    } catch {
+      // Try next RPC
+    }
+  }
+  return null;
+}
+
+/**
+ * Estimate batch deploy cost
+ */
+async function estimateBatchDeployCost(
+  chainId: number,
+  tokenCount: number
+): Promise<{
+  gasPerToken: string;
+  totalGas: string;
+  gasPriceGwei: string;
+  estimatedCost: string;
+  estimatedCostUsd: string;
+  sufficient: boolean;
+  balance: string;
+  balanceUsd: string;
+  deploysAffordable: number;
+} | null> {
+  const env = getEnvConfig();
+  if (!env.privateKey) return null;
+
+  try {
+    const account = privateKeyToAccount(env.privateKey as `0x${string}`);
+    const chainInfo = CHAIN_INFO[chainId];
+    if (!chainInfo) return null;
+
+    // Get balance and gas price in parallel
+    const [balance, gasPriceResult, tokenPrice] = await Promise.all([
+      getNativeBalance(account.address, chainId),
+      getGasPrice(chainId),
+      fetchTokenPrice(chainInfo.coingeckoId),
+    ]);
+
+    // Calculate gas cost
+    let gasPrice: bigint;
+    if (gasPriceResult) {
+      gasPrice = gasPriceResult.gasPrice;
+    } else {
+      // Fallback to estimate
+      const fallbackCost = DEPLOY_GAS_ESTIMATES[chainId] || 0.001;
+      gasPrice = BigInt(Math.floor((fallbackCost * 1e18) / Number(DEPLOY_GAS_UNITS)));
+    }
+
+    const gasPerToken = DEPLOY_GAS_UNITS * gasPrice;
+    const totalGas = gasPerToken * BigInt(tokenCount);
+    const sufficient = balance >= totalGas;
+
+    // Calculate how many deploys can afford
+    const deploysAffordable = gasPerToken > 0n ? Number(balance / gasPerToken) : 0;
+
+    // Format values
+    const balanceEth = Number(balance) / 1e18;
+    const totalGasEth = Number(totalGas) / 1e18;
+    const gasPerTokenEth = Number(gasPerToken) / 1e18;
+    const gasPriceGwei = Number(gasPrice) / 1e9;
+
+    return {
+      gasPerToken: gasPerTokenEth.toFixed(6),
+      totalGas: totalGasEth.toFixed(6),
+      gasPriceGwei: gasPriceGwei.toFixed(2),
+      estimatedCost: totalGasEth.toFixed(6),
+      estimatedCostUsd: (totalGasEth * tokenPrice).toFixed(2),
+      sufficient,
+      balance: balanceEth.toFixed(6),
+      balanceUsd: (balanceEth * tokenPrice).toFixed(2),
+      deploysAffordable,
+    };
+  } catch {
+    return null;
+  }
+}
 
 // Chain info for wallet display
 interface ChainInfo {
@@ -3093,10 +3215,81 @@ async function deployBatchTemplate(): Promise<void> {
   console.log(`  ${chalk.gray('Deployer:')}  ${chalk.white(deployerAddress.slice(0, 10))}...`);
   console.log('');
 
+  // Gas Estimation
+  const chainName = template.chain || 'base';
+  const chainId =
+    chainName === 'base'
+      ? 8453
+      : chainName === 'ethereum'
+        ? 1
+        : chainName === 'arbitrum'
+          ? 42161
+          : chainName === 'unichain'
+            ? 130
+            : 10143;
+
+  console.log(chalk.cyan('  GAS ESTIMATION'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  process.stdout.write(chalk.gray('  Fetching gas prices...'));
+
+  const gasEstimate = await estimateBatchDeployCost(chainId, template.tokens.length);
+  process.stdout.write(`\r${' '.repeat(40)}\r`);
+
+  if (gasEstimate) {
+    const symbol = chainId === 10143 ? 'MON' : 'ETH';
+    console.log(
+      `  ${chalk.gray('Gas Price:')}  ${chalk.white(`${gasEstimate.gasPriceGwei} gwei`)}`
+    );
+    console.log(
+      `  ${chalk.gray('Per Token:')}  ${chalk.white(`~${gasEstimate.gasPerToken} ${symbol}`)}`
+    );
+    console.log(
+      `  ${chalk.gray('Total Est:')}  ${chalk.yellow(`${gasEstimate.estimatedCost} ${symbol}`)} ${chalk.gray(`(~$${gasEstimate.estimatedCostUsd})`)}`
+    );
+    console.log(
+      `  ${chalk.gray('Balance:')}    ${chalk.white(`${gasEstimate.balance} ${symbol}`)} ${chalk.gray(`(~$${gasEstimate.balanceUsd})`)}`
+    );
+
+    if (gasEstimate.sufficient) {
+      console.log(`  ${chalk.gray('Status:')}     ${chalk.green('✓ Sufficient balance')}`);
+      if (gasEstimate.deploysAffordable > template.tokens.length) {
+        console.log(
+          `  ${chalk.gray('Can deploy:')} ${chalk.white(`up to ${gasEstimate.deploysAffordable} tokens`)}`
+        );
+      }
+    } else {
+      console.log(`  ${chalk.gray('Status:')}     ${chalk.red('✗ Insufficient balance!')}`);
+      console.log(
+        `  ${chalk.gray('Can deploy:')} ${chalk.yellow(`only ${gasEstimate.deploysAffordable} tokens`)}`
+      );
+      console.log('');
+      console.log(
+        chalk.red(
+          `  ⚠ You need at least ${gasEstimate.estimatedCost} ${symbol} to deploy ${template.tokens.length} tokens.`
+        )
+      );
+      console.log(chalk.red(`    Current balance: ${gasEstimate.balance} ${symbol}`));
+      console.log('');
+
+      const continueAnyway = await confirm({
+        message: chalk.yellow('Continue anyway? (may fail)'),
+        default: false,
+      });
+
+      if (!continueAnyway) {
+        console.log(chalk.yellow('\n  Cancelled. Please add more funds.\n'));
+        return;
+      }
+    }
+  } else {
+    console.log(chalk.yellow('  Could not fetch gas estimate. Proceeding with caution.'));
+  }
+  console.log('');
+
   // Confirm
   const confirmed = await confirm({
-    message: `Deploy ${template.tokens.length} tokens on ${template.chain || 'base'}?`,
-    default: true,
+    message: `Deploy ${template.tokens.length} tokens on ${chainName}?`,
+    default: gasEstimate?.sufficient ?? true,
   });
 
   if (!confirmed) {
