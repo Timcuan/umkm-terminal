@@ -505,18 +505,26 @@ export async function deployTemplate(
         // Deploy
         const deployResult = await deployer.deploy(config);
 
-        if (deployResult.success) {
-          result = {
-            index: i,
-            name: token.name,
-            symbol: token.symbol,
-            success: true,
-            address: deployResult.tokenAddress,
-            txHash: deployResult.txHash,
-          };
-          break; // Success, exit retry loop
+        if (deployResult.success && deployResult.tokenAddress) {
+          // Verify token exists on-chain by checking if address is valid
+          const tokenAddress = deployResult.tokenAddress;
+
+          // Basic validation - address should be 42 chars (0x + 40 hex)
+          if (tokenAddress && tokenAddress.length === 42 && tokenAddress.startsWith('0x')) {
+            result = {
+              index: i,
+              name: token.name,
+              symbol: token.symbol,
+              success: true,
+              address: tokenAddress,
+              txHash: deployResult.txHash,
+            };
+            break; // Success, exit retry loop
+          } else {
+            result.error = 'Invalid token address returned';
+          }
         } else {
-          result.error = deployResult.error;
+          result.error = deployResult.error || 'Deploy failed - no token address';
         }
       } catch (err) {
         result.error = err instanceof Error ? err.message : String(err);

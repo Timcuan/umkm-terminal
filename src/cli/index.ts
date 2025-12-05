@@ -3087,15 +3087,22 @@ async function deployBatchTemplate(): Promise<void> {
   // Show links for first deployed token
   if (deployed.length > 0) {
     const first = deployed[0];
+    const chainName = template.chain || 'base';
     console.log('');
     console.log(chalk.cyan('  LINKS'));
     console.log(chalk.gray('  ─────────────────────────────────────'));
     console.log(
-      `  ${chalk.gray('Dex:')}      ${chalk.cyan(`https://dexscreener.com/${template.chain || 'base'}/${first.address}`)}`
+      `  ${chalk.gray('Explorer:')} ${chalk.cyan(`https://basescan.org/token/${first.address}`)}`
     );
     console.log(
-      `  ${chalk.gray('Clanker:')} ${chalk.cyan(`https://clanker.world/clanker/${first.address}`)}`
+      `  ${chalk.gray('Clanker:')}  ${chalk.cyan(`https://clanker.world/clanker/${first.address}`)}`
     );
+    console.log(
+      `  ${chalk.gray('Dex:')}       ${chalk.cyan(`https://dexscreener.com/${chainName}/${first.address}`)}`
+    );
+    console.log('');
+    console.log(chalk.yellow('  ⚠ Note: Dexscreener may take a few minutes to index new tokens.'));
+    console.log(chalk.yellow('    If not showing, check Explorer link to verify deployment.'));
   }
 
   console.log('');
