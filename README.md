@@ -1,4 +1,4 @@
-# Clanker SDK v4.25
+# UMKM Terminal v4.25
 
 Multi-chain token deployment SDK for Clanker protocol.
 
@@ -19,11 +19,11 @@ Multi-chain token deployment SDK for Clanker protocol.
 ### macOS (Terminal)
 ```bash
 # Option 1: One-line install
-curl -fsSL https://raw.githubusercontent.com/Timcuan/clanker-sdk/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Timcuan/umkm-terminal/main/install.sh | bash
 
 # Option 2: Manual install
 brew install node
-npm install -g clanker-sdk
+npm install -g umkm-terminal
 umkm
 ```
 
@@ -33,7 +33,7 @@ umkm
 # 2. Run these commands:
 pkg update && pkg upgrade -y
 pkg install nodejs-lts
-npm install -g clanker-sdk
+npm install -g umkm-terminal
 umkm
 ```
 
@@ -50,7 +50,7 @@ umkm
 umkm
 
 # Or use npx (no install needed)
-npx clanker-sdk
+npx umkm-terminal
 ```
 
 The interactive terminal provides:
@@ -66,16 +66,16 @@ The interactive terminal provides:
 
 ```bash
 # Simple deploy on Base
-npx clanker deploy -n "My Token" -s "TKN" -k 0xYOUR_PRIVATE_KEY
+umkm deploy -n "My Token" -s "TKN" -k 0xYOUR_PRIVATE_KEY
 
 # With vault (30% locked for 30 days)
-npx clanker deploy -n "My Token" -s "TKN" --vault 30 -k 0x...
+umkm deploy -n "My Token" -s "TKN" --vault 30 -k 0x...
 
 # On Arbitrum with MEV protection
-npx clanker deploy -n "My Token" -s "TKN" -c 42161 --mev 8 -k 0x...
+umkm deploy -n "My Token" -s "TKN" -c 42161 --mev 8 -k 0x...
 
 # See all options
-npx clanker --help
+umkm --help
 ```
 
 ---
@@ -116,14 +116,14 @@ MEV_BLOCK_DELAY=8
 ## 📦 SDK Installation
 
 ```bash
-npm install clanker-sdk
+npm install umkm-terminal
 ```
 
 ## Easy Deploy (Recommended)
 
 ```typescript
 import 'dotenv/config';
-import { quickDeploy } from 'clanker-sdk';
+import { quickDeploy } from 'umkm-terminal';
 
 // Just set PRIVATE_KEY in .env and deploy!
 const result = await quickDeploy({
@@ -138,7 +138,7 @@ console.log(result.tokenAddress);
 ## Quick Start (SDK)
 
 ```typescript
-import { Clanker, CHAIN_IDS } from 'clanker-sdk';
+import { Deployer } from 'umkm-terminal';
 import { createPublicClient, createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';

@@ -80,7 +80,7 @@ install_node() {
 install_umkm() {
     echo ""
     echo -e "${CYAN}[*] Installing UMKM Terminal...${NC}"
-    npm install -g clanker-sdk
+    npm install -g umkm-terminal
 }
 
 # Main

@@ -1,5 +1,5 @@
 {
-  "name": "clanker-sdk",
+  "name": "umkm-terminal",
   "version": "4.25.0",
   "description": "Multi-chain token deployment SDK for Clanker protocol",
   "type": "module",
