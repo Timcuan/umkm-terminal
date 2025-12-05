@@ -5,10 +5,17 @@
   "defaults": {
     "fee": 5,
     "mev": 8,
+    "feeType": "static",
     "tokenAdmin": "0x2211d1D0020DAEA8039E46Cf1367962070d77DA9",
     "rewardRecipient": "0x3A1dc8C3C1A28853b8002AeBaF98F604c4c51795",
+    "rewardToken": "Both",
     "image": "bafkreiaxvv4vlu65mkmbzpfjvtug25d3gfsveyhzasvpa7wdtfvcwhlq44",
-    "description": "Token Deployed by Clanker SDK"
+    "description": "Token Deployed by Clanker SDK",
+    "socials": {
+      "farcaster": "99"
+    },
+    "interfaceName": "UMKM Terminal",
+    "platformName": "Clanker"
   },
   "tokens": [
     {
@@ -16,6 +23,9 @@
       "symbol": "jesse",
       "image": "bafkreiaxvv4vlu65mkmbzpfjvtug25d3gfsveyhzasvpa7wdtfvcwhlq44",
       "description": "Token Deployed by Clanker SDK",
+      "socials": {
+        "farcaster": "99"
+      },
       "tokenAdmin": "",
       "rewardRecipients": []
     },
@@ -24,6 +34,9 @@
       "symbol": "jesse",
       "image": "bafkreiaxvv4vlu65mkmbzpfjvtug25d3gfsveyhzasvpa7wdtfvcwhlq44",
       "description": "Token Deployed by Clanker SDK",
+      "socials": {
+        "farcaster": "99"
+      },
       "tokenAdmin": "",
       "rewardRecipients": []
     },
@@ -32,6 +45,9 @@
       "symbol": "jesse",
       "image": "bafkreiaxvv4vlu65mkmbzpfjvtug25d3gfsveyhzasvpa7wdtfvcwhlq44",
       "description": "Token Deployed by Clanker SDK",
+      "socials": {
+        "farcaster": "99"
+      },
       "tokenAdmin": "",
       "rewardRecipients": []
     },
@@ -40,6 +56,9 @@
       "symbol": "jesse",
       "image": "bafkreiaxvv4vlu65mkmbzpfjvtug25d3gfsveyhzasvpa7wdtfvcwhlq44",
       "description": "Token Deployed by Clanker SDK",
+      "socials": {
+        "farcaster": "99"
+      },
       "tokenAdmin": "",
       "rewardRecipients": []
     },
@@ -48,6 +67,9 @@
       "symbol": "jesse",
       "image": "bafkreiaxvv4vlu65mkmbzpfjvtug25d3gfsveyhzasvpa7wdtfvcwhlq44",
       "description": "Token Deployed by Clanker SDK",
+      "socials": {
+        "farcaster": "99"
+      },
       "tokenAdmin": "",
       "rewardRecipients": []
     }

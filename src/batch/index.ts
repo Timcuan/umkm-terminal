@@ -8,6 +8,35 @@ import * as path from 'node:path';
 import { createDeployer, type SimpleDeployConfig } from '../deployer/index.js';
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Normalize image URL - converts IPFS CID to ipfs:// format
+ */
+function normalizeImageUrl(input: string): string {
+  if (!input) return '';
+  const trimmed = input.trim();
+
+  // Already a full URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+
+  // Already ipfs:// format
+  if (trimmed.startsWith('ipfs://')) {
+    return trimmed;
+  }
+
+  // Raw IPFS CID (Qm... or bafy... or bafk...)
+  if (trimmed.startsWith('Qm') || trimmed.startsWith('bafy') || trimmed.startsWith('bafk')) {
+    return `ipfs://${trimmed}`;
+  }
+
+  return trimmed;
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -74,9 +103,11 @@ export type RewardTokenType = 'Both' | 'Paired' | 'Clanker';
 /** Template defaults */
 export interface BatchDefaults {
   // Fees
-  fee?: number; // 1-80%
+  fee?: number; // 1-80% (for static)
   mev?: number; // 0-20 blocks
   feeType?: 'static' | 'dynamic';
+  dynamicBaseFee?: number; // 1-10% (for dynamic - minimum fee)
+  dynamicMaxFee?: number; // 1-80% (for dynamic - maximum fee)
 
   // Admin & Rewards
   tokenAdmin?: string;
@@ -136,6 +167,10 @@ export interface BatchSummary {
 export interface BatchOptions {
   /** Delay between deploys in seconds (default: 3) */
   delay?: number;
+  /** Random delay variation - min seconds to add (default: 0) */
+  randomDelayMin?: number;
+  /** Random delay variation - max seconds to add (default: 0) */
+  randomDelayMax?: number;
   /** Number of retries (default: 2) */
   retries?: number;
   /** Progress callback */
@@ -159,6 +194,8 @@ export interface GenerateOptions {
   fee?: number;
   mev?: number;
   feeType?: 'static' | 'dynamic';
+  dynamicBaseFee?: number; // 1-10% (for dynamic)
+  dynamicMaxFee?: number; // 1-80% (for dynamic)
   tokenAdmin?: string;
   rewardRecipient?: string;
   rewardToken?: RewardTokenType;
@@ -216,6 +253,8 @@ export function generateTemplate(count: number, options: GenerateOptions): Batch
       fee: options.fee || 5,
       mev: options.mev ?? 8,
       feeType: options.feeType || 'static',
+      dynamicBaseFee: options.dynamicBaseFee,
+      dynamicMaxFee: options.dynamicMaxFee,
       tokenAdmin: options.tokenAdmin || '',
       rewardRecipient: options.rewardRecipient || '',
       rewardToken: options.rewardToken || 'Both',
@@ -418,15 +457,29 @@ export async function deployTemplate(
   const startTime = Date.now();
   const chain = template.chain || 'base';
   const chainId = CHAIN_IDS[chain];
-  const delay = (options.delay ?? 3) * 1000;
+  const baseDelay = (options.delay ?? 3) * 1000;
+  const randomDelayMin = (options.randomDelayMin ?? 0) * 1000;
+  const randomDelayMax = (options.randomDelayMax ?? 0) * 1000;
   const retries = options.retries ?? 2;
   const onProgress = options.onProgress;
+  
+  // Function to calculate delay with random variation
+  const getDelay = (): number => {
+    if (randomDelayMax > randomDelayMin) {
+      // Random value between min and max (already in ms)
+      const randomExtra = Math.floor(Math.random() * (randomDelayMax - randomDelayMin)) + randomDelayMin;
+      return baseDelay + randomExtra;
+    }
+    return baseDelay;
+  };
 
   // Get defaults
   const defaults = template.defaults || {};
   const defaultFee = defaults.fee || 5;
   const defaultMev = defaults.mev ?? 8;
   const defaultFeeType = defaults.feeType || 'static';
+  const defaultDynamicBaseFee = defaults.dynamicBaseFee || 1; // 1% min for dynamic
+  const defaultDynamicMaxFee = defaults.dynamicMaxFee || 10; // 10% max for dynamic
   const defaultAdmin = defaults.tokenAdmin || '';
   const defaultRecipient = defaults.rewardRecipient || '';
   const defaultRewardToken = defaults.rewardToken || 'Both';
@@ -465,7 +518,9 @@ export async function deployTemplate(
         const tokenAdmin = (token.tokenAdmin || defaultAdmin || deployerAddress) as `0x${string}`;
         const fee = token.fee ?? defaultFee;
         const mev = token.mev ?? defaultMev;
-        const image = token.image || defaultImage;
+        // Normalize image URL (convert IPFS CID to ipfs:// format)
+        const rawImage = token.image || defaultImage;
+        const image = normalizeImageUrl(rawImage);
         const description = token.description || defaultDescription;
         const socials = token.socials || defaultSocials;
         const vault = token.vault || defaultVault;
@@ -513,11 +568,18 @@ export async function deployTemplate(
           description,
           tokenAdmin,
           mev,
-          fees: {
-            type: defaultFeeType,
-            clankerFee: fee,
-            pairedFee: fee,
-          },
+          fees:
+            defaultFeeType === 'dynamic'
+              ? {
+                  type: 'dynamic',
+                  baseFee: defaultDynamicBaseFee,
+                  maxLpFee: defaultDynamicMaxFee,
+                }
+              : {
+                  type: 'static',
+                  clankerFee: fee,
+                  pairedFee: fee,
+                },
           rewardRecipients,
           // Social links
           socials: socials
@@ -580,9 +642,12 @@ export async function deployTemplate(
       onProgress(i + 1, total, result);
     }
 
-    // Delay between deploys
-    if (i < template.tokens.length - 1 && delay > 0) {
-      await sleep(delay);
+    // Delay between deploys (with random variation if configured)
+    if (i < template.tokens.length - 1) {
+      const delay = getDelay();
+      if (delay > 0) {
+        await sleep(delay);
+      }
     }
   }
 

@@ -196,3 +196,87 @@ export {
   type TokenSocials,
   validateTemplate,
 } from './batch/index.js';
+
+// =============================================================================
+// Farcaster Module
+// =============================================================================
+
+export {
+  type FarcasterLookupResult,
+  type FarcasterUser,
+  type FarcasterWalletsResult,
+  getProfilePicture,
+  getUserByFid,
+  getUserByUsername,
+  getUsersByFids,
+  getUserWallets,
+  getWalletCount,
+  resolveUser,
+  validateFid,
+  validateUsername,
+} from './farcaster/index.js';
+
+// =============================================================================
+// Wallet Management
+// =============================================================================
+
+export {
+  // Types
+  type StoredWallet,
+  type ValidationResult,
+  type WalletBackup,
+  type WalletInfo,
+  type WalletOperationResult,
+  type WalletStore,
+  // Crypto utilities
+  decrypt,
+  decryptLegacy,
+  decryptSimple,
+  encrypt,
+  encryptSimple,
+  formatAddress,
+  generateMnemonicPhrase,
+  generateWallet,
+  generateWalletWithMnemonic,
+  getAddressFromKey,
+  isLegacyEncryption,
+  mnemonicToAddress,
+  mnemonicToPrivateKey,
+  validateMnemonicPhrase,
+  validatePrivateKey,
+  // Storage - paths
+  getBackupDir,
+  getEnvPath,
+  getStorePath,
+  getWalletDir,
+  // Storage - multi-wallet
+  addWalletToStore,
+  addWalletWithMnemonicToStore,
+  decryptWallet,
+  decryptWalletMnemonic,
+  getActiveWallet,
+  getAllWallets,
+  getWalletByAddress,
+  loadWalletStore,
+  migrateEnvWalletToStore,
+  migrateOldWalletStore,
+  removeWalletFromStore,
+  saveWalletStore,
+  setActiveWallet,
+  updateWalletName,
+  walletHasMnemonic,
+  // Storage - .env sync
+  getCurrentPrivateKey,
+  getCurrentWallet,
+  getEnvPrivateKey,
+  savePrivateKeyToEnv,
+  syncActiveWalletToEnv,
+  // Storage - backup files
+  createBackupFile,
+  importFromBackup,
+  listBackupFiles,
+  readBackupFile,
+  // Interactive menu
+  handleWalletManagement,
+  showWalletMenu,
+} from './wallet/index.js';

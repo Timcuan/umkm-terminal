@@ -186,19 +186,24 @@ export class Clanker {
     const publicClient = this.requirePublicClient();
     const deployment = this.getChainDeployment();
 
-    const rewards = await publicClient.readContract({
-      address: deployment.contracts.locker,
-      abi: LockerAbi,
-      functionName: 'getRewards',
-      args: [token],
-    });
+    try {
+      const rewards = await publicClient.readContract({
+        address: deployment.contracts.locker,
+        abi: LockerAbi,
+        functionName: 'getRewards',
+        args: [token],
+      });
 
-    return rewards as Array<{
-      recipient: `0x${string}`;
-      admin: `0x${string}`;
-      bps: number;
-      token: number;
-    }>;
+      return rewards as Array<{
+        recipient: `0x${string}`;
+        admin: `0x${string}`;
+        bps: number;
+        token: number;
+      }>;
+    } catch {
+      // Token may not be registered in locker yet
+      return [];
+    }
   }
 
   /**
