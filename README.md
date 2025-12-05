@@ -19,7 +19,7 @@ Multi-chain token deployment SDK for Clanker protocol.
 ### macOS (Terminal)
 ```bash
 # Option 1: One-line install
-curl -fsSL https://raw.githubusercontent.com/user/clanker-sdk/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Timcuan/clanker-sdk/main/install.sh | bash
 
 # Option 2: Manual install
 brew install node
