@@ -12,6 +12,11 @@ dist/
 # Local data
 .deployed-tokens.json
 
+# Wallet storage (SENSITIVE - never commit!)
+.umkm-wallets/
+.wallets.json
+wallets/
+
 # IDE
 .idea/
 .vscode/

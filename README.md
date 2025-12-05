@@ -1,6 +1,15 @@
 # UMKM Terminal v4.25
 
-Multi-chain token deployment SDK for Clanker protocol.
+Multi-chain token deployment SDK for Clanker protocol with secure multi-wallet management.
+
+## ✨ What's New in v4.25
+
+- 🔐 **Secure Multi-Wallet Management** - AES-256-GCM encryption with PBKDF2
+- 🔑 **Mnemonic Support** - 12-word recovery phrase compatible with MetaMask, Ledger, etc.
+- 📁 **Dedicated Wallet Storage** - Secure `.umkm-wallets/` folder
+- 🔄 **Easy Wallet Switching** - Switch between multiple wallets instantly
+- 📤 **Backup & Restore** - Encrypted backup files with recovery phrase
+- 🌐 **Farcaster Integration** - Fetch user wallets from Farcaster
 
 ## Supported Chains (Mainnet Only)
 
@@ -57,7 +66,9 @@ The interactive terminal provides:
 - 🎨 Beautiful ASCII UI
 - ⌨️ Arrow key navigation
 - 💰 Wallet info & balance
+- 🔐 Multi-wallet management
 - 🚀 Easy token deployment
+- 📦 Batch deployment (1-100 tokens)
 - ⚙️ Settings management
 
 ---
@@ -80,12 +91,43 @@ umkm --help
 
 ---
 
+## 🔐 Wallet Management
+
+UMKM Terminal now supports secure multi-wallet management:
+
+```bash
+# Start terminal and go to Wallet Info > Wallet Management
+umkm
+```
+
+### Features
+- **Generate New Wallet** - Creates HD wallet with 12-word recovery phrase
+- **Import Wallet** - From recovery phrase, private key, or backup file
+- **Switch Wallet** - Easily switch between stored wallets
+- **Export/Backup** - Create encrypted backup files
+- **Manage Wallets** - Rename or delete wallets
+
+### Security
+- 🔒 **AES-256-GCM** encryption with PBKDF2 (100,000 iterations)
+- 📁 Wallets stored in `.umkm-wallets/` folder with restricted permissions
+- 🔑 Recovery phrases compatible with MetaMask, Ledger, Trezor, etc.
+- ⚠️ Never share your recovery phrase or private key!
+
+### Wallet Storage Structure
+```
+.umkm-wallets/
+├── store.json      # Encrypted wallet store
+└── backups/        # Encrypted backup files
+```
+
+---
+
 ## 🔧 Configuration (.env file)
 
 Create a `.env` file in your project directory:
 
 ```env
-# Required
+# Required (or use Wallet Management)
 PRIVATE_KEY=0x...your_private_key_here
 
 # Optional - Chain (default: 8453 = Base)
@@ -168,11 +210,15 @@ console.log('Token deployed at:', address);
 ## Features
 
 - **Multi-chain Mainnet**: Deploy on Base, Ethereum, Arbitrum, Unichain, Monad
+- **Secure Wallet Management**: AES-256-GCM encrypted multi-wallet storage
+- **Mnemonic Support**: BIP39/BIP44 compatible recovery phrases
 - **Easy Deployment**: Simple API for token deployment
+- **Batch Deployment**: Deploy 1-100 tokens at once
+- **Farcaster Integration**: Generate tokens from Farcaster user wallets
 - **Fee Management**: Claim trading fees from your tokens
 - **Vault Operations**: Manage vested tokens with lockup
 - **MEV Protection**: Built-in block delay protection
-- **Metadata Updates**: Update token image and metadata
+- **Vanity Addresses**: Mine custom token addresses
 
 ## Advanced Deployment
 
@@ -316,6 +362,73 @@ const formatted = formatTokenAmount(1000000000000000000n); // "1"
 
 // Parse token amount
 const parsed = parseTokenAmount("1.5"); // 1500000000000000000n
+```
+
+## Wallet SDK Functions
+
+```typescript
+import {
+  // Wallet generation
+  generateWallet,
+  generateWalletWithMnemonic,
+  
+  // Validation
+  validatePrivateKey,
+  validateMnemonicPhrase,
+  
+  // Mnemonic utilities
+  mnemonicToPrivateKey,
+  mnemonicToAddress,
+  
+  // Encryption
+  encrypt,
+  decrypt,
+  
+  // Storage
+  addWalletToStore,
+  addWalletWithMnemonicToStore,
+  getAllWallets,
+  getActiveWallet,
+  setActiveWallet,
+  decryptWallet,
+  decryptWalletMnemonic,
+  
+  // Backup
+  createBackupFile,
+  importFromBackup,
+  listBackupFiles,
+} from 'umkm-terminal';
+
+// Generate wallet with mnemonic
+const wallet = generateWalletWithMnemonic();
+console.log('Address:', wallet.address);
+console.log('Mnemonic:', wallet.mnemonic); // 12 words
+console.log('Private Key:', wallet.privateKey);
+
+// Validate mnemonic
+const isValid = validateMnemonicPhrase(wallet.mnemonic);
+
+// Derive key from mnemonic (index 0 = first account)
+const derivedKey = mnemonicToPrivateKey(wallet.mnemonic, 0);
+
+// Encrypt/decrypt data
+const encrypted = encrypt('sensitive data', 'password123');
+const decrypted = decrypt(encrypted, 'password123');
+```
+
+## Farcaster Integration
+
+```typescript
+import { getUserWallets, resolveUser } from 'umkm-terminal';
+
+// Get user profile
+const user = await resolveUser('username');
+console.log('FID:', user.fid);
+console.log('Display Name:', user.displayName);
+
+// Get all wallets from Farcaster user
+const result = await getUserWallets('username');
+console.log('Wallets:', result.wallets);
 ```
 
 ## License

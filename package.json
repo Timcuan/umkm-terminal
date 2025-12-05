@@ -1,7 +1,7 @@
 {
   "name": "umkm-terminal",
   "version": "4.25.0",
-  "description": "Multi-chain token deployment SDK for Clanker protocol",
+  "description": "Multi-chain token deployment SDK for Clanker protocol with secure multi-wallet management",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -52,7 +52,13 @@
     "arbitrum",
     "unichain",
     "monad",
-    "multi-chain"
+    "multi-chain",
+    "wallet",
+    "mnemonic",
+    "bip39",
+    "bip44",
+    "farcaster",
+    "batch-deploy"
   ],
   "author": "",
   "license": "MIT",
