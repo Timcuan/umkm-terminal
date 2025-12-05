@@ -3,7 +3,7 @@
  * Simple interface for deploying tokens from any platform
  */
 
-import { createPublicClient, createWalletClient, http } from 'viem';
+import { createPublicClient, createWalletClient, http, zeroAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { getChain } from '../chains/index.js';
 import {
@@ -14,6 +14,7 @@ import {
   loadEnvConfig,
   validateConfig,
 } from '../config/index.js';
+import { getDeployment } from '../contracts/addresses.js';
 import type { ClankerTokenV4 } from '../types/index.js';
 import { Clanker } from '../v4/index.js';
 
@@ -197,6 +198,20 @@ export class Deployer {
    */
   get chainId(): number {
     return this.config.chainId;
+  }
+
+  /**
+   * Get chain features availability
+   */
+  get chainFeatures(): { mevProtection: boolean; dynamicFees: boolean } {
+    const deployment = getDeployment(this.config.chainId);
+    if (!deployment) {
+      return { mevProtection: false, dynamicFees: false };
+    }
+    return {
+      mevProtection: deployment.contracts.mevModule !== zeroAddress,
+      dynamicFees: deployment.contracts.feeDynamicHook !== zeroAddress,
+    };
   }
 
   /**

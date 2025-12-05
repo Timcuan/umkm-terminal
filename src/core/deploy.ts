@@ -134,14 +134,27 @@ function generateSalt(): `0x${string}` {
 
 /**
  * Encode fee configuration
+ * Note: Some chains (e.g., Ethereum, Monad) don't have Dynamic Fee Hook
  */
 function encodeFeeConfig(
   fees: ClankerTokenV4['fees'],
   deployment: ChainDeployment
 ): { hook: Address; poolData: `0x${string}` } {
-  if (!fees || fees.type === 'static') {
-    const clankerFee = fees?.clankerFee ?? 100; // 1% default
-    const pairedFee = fees?.pairedFee ?? 100;
+  // Check if dynamic fee hook is available
+  const dynamicHookAvailable = deployment.contracts.feeDynamicHook !== zeroAddress;
+  
+  // Use static fees if: no fees config, static type, or dynamic requested but not available
+  const useStatic = !fees || fees.type === 'static' || (fees.type === 'dynamic' && !dynamicHookAvailable);
+  
+  if (useStatic) {
+    // Get fees from static config or use defaults
+    let clankerFee = 100; // 1% default
+    let pairedFee = 100;
+    
+    if (fees?.type === 'static') {
+      clankerFee = fees.clankerFee ?? 100;
+      pairedFee = fees.pairedFee ?? 100;
+    }
 
     return {
       hook: deployment.contracts.feeStaticHook,
@@ -152,32 +165,35 @@ function encodeFeeConfig(
     };
   }
 
-  // Dynamic fees
-  const baseFee = fees.baseFee ?? 100;
-  const maxFee = fees.maxFee ?? 500;
-
+  // Dynamic fees (fees.type === 'dynamic' is guaranteed here)
+  const dynamicFees = fees as { type: 'dynamic'; baseFee?: number; maxFee?: number; referenceTickFilterPeriod?: number; resetPeriod?: number; resetTickFilter?: number; feeControlNumerator?: number; decayFilterBps?: number };
+  
   return {
     hook: deployment.contracts.feeDynamicHook,
     poolData: encodeAbiParameters(DynamicFeeHookAbi, [
-      baseFee * 100,
-      maxFee * 100,
-      BigInt(fees.referenceTickFilterPeriod ?? 30),
-      BigInt(fees.resetPeriod ?? 120),
-      fees.resetTickFilter ?? 200,
-      BigInt(fees.feeControlNumerator ?? 500000000),
-      fees.decayFilterBps ?? 7500,
+      (dynamicFees.baseFee ?? 100) * 100,
+      (dynamicFees.maxFee ?? 500) * 100,
+      BigInt(dynamicFees.referenceTickFilterPeriod ?? 30),
+      BigInt(dynamicFees.resetPeriod ?? 120),
+      dynamicFees.resetTickFilter ?? 200,
+      BigInt(dynamicFees.feeControlNumerator ?? 500000000),
+      dynamicFees.decayFilterBps ?? 7500,
     ]),
   };
 }
 
 /**
  * Encode MEV module configuration
+ * Note: Some chains (e.g., Monad) don't have MEV module deployed
  */
 function encodeMevConfig(
   mev: ClankerTokenV4['mev'],
   deployment: ChainDeployment
 ): { mevModule: Address; mevModuleData: `0x${string}` } {
-  if (!mev || mev.type === 'none') {
+  // Check if MEV module is available on this chain
+  const mevModuleAvailable = deployment.contracts.mevModule !== zeroAddress;
+  
+  if (!mev || mev.type === 'none' || !mevModuleAvailable) {
     return {
       mevModule: zeroAddress,
       mevModuleData: '0x',
