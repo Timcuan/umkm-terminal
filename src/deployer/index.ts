@@ -281,31 +281,35 @@ export class Deployer {
 
       // ─────────────────────────────────────────────────────────────────────
       // Fee Configuration
+      // SimpleDeployConfig uses % (5 = 5%), ClankerTokenV4 uses bps (500 = 5%)
       // ─────────────────────────────────────────────────────────────────────
       if (config.fees) {
         const feeType = config.fees.type || 'static';
         if (feeType === 'static') {
+          // User inputs % (1-80), convert to bps (100-8000)
+          // Default: 5% = 500 bps
           tokenConfig.fees = {
             type: 'static',
-            clankerFee: (config.fees.clankerFee ?? 5) * 100, // % to bps (default 5%)
-            pairedFee: (config.fees.pairedFee ?? 5) * 100,   // % to bps (default 5%)
+            clankerFee: (config.fees.clankerFee ?? 5) * 100, // 5% -> 500 bps
+            pairedFee: (config.fees.pairedFee ?? 5) * 100,   // 5% -> 500 bps
           };
         } else {
-          // Dynamic fees - use simplified config
+          // Dynamic fees - user inputs % for baseFee/maxLpFee
+          // Default: baseFee 1% = 100 bps, maxFee 5% = 500 bps
           tokenConfig.fees = {
             type: 'dynamic',
-            baseFee: (config.fees.baseFee ?? 0.5) * 100,
-            maxFee: (config.fees.maxLpFee ?? 5) * 100,
+            baseFee: (config.fees.baseFee ?? 1) * 100,       // 1% -> 100 bps
+            maxFee: (config.fees.maxLpFee ?? 5) * 100,       // 5% -> 500 bps
             // Default values for other dynamic fee params
             startingSniperFee: 500,
             endingSniperFee: 100,
             clankerFee: 100,
-            referenceTickFilterPeriod: 300,
-            resetPeriod: 3600,
-            resetTickFilter: 500,
-            feeControlNumerator: 100,
-            decayFilterBps: 500,
-            decayDuration: 300,
+            referenceTickFilterPeriod: 30,
+            resetPeriod: 120,
+            resetTickFilter: 200,
+            feeControlNumerator: 500000000,
+            decayFilterBps: 7500,
+            decayDuration: 30,
           };
         }
       }

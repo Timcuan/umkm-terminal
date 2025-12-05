@@ -50,13 +50,13 @@ interface DeploymentArgs {
   };
   lockerConfig: {
     locker: Address;
-    lockerData: `0x${string}`;
     rewardAdmins: Address[];
     rewardRecipients: Address[];
     rewardBps: number[];
     tickLower: number[];
     tickUpper: number[];
     positionBps: number[];
+    lockerData: `0x${string}`; // Must be last per ABI order
   };
   mevModuleConfig: {
     mevModule: Address;
@@ -148,31 +148,34 @@ function encodeFeeConfig(
   
   if (useStatic) {
     // Get fees from static config or use defaults
-    let clankerFee = 100; // 1% default
-    let pairedFee = 100;
+    // Fee values are in basis points (100 = 1%, 500 = 5%)
+    // Contract expects uniBps (10000 = 1%), so multiply by 100
+    let clankerFeeBps = 100; // 1% default
+    let pairedFeeBps = 100;
     
     if (fees?.type === 'static') {
-      clankerFee = fees.clankerFee ?? 100;
-      pairedFee = fees.pairedFee ?? 100;
+      clankerFeeBps = fees.clankerFee ?? 100;
+      pairedFeeBps = fees.pairedFee ?? 100;
     }
 
     return {
       hook: deployment.contracts.feeStaticHook,
       poolData: encodeAbiParameters(StaticFeeHookAbi, [
-        clankerFee * 100, // Convert to uniBps
-        pairedFee * 100,
+        clankerFeeBps * 100, // bps to uniBps (100 bps = 10000 uniBps = 1%)
+        pairedFeeBps * 100,
       ]),
     };
   }
 
   // Dynamic fees (fees.type === 'dynamic' is guaranteed here)
+  // baseFee/maxFee are in bps, need to convert to uniBps
   const dynamicFees = fees as { type: 'dynamic'; baseFee?: number; maxFee?: number; referenceTickFilterPeriod?: number; resetPeriod?: number; resetTickFilter?: number; feeControlNumerator?: number; decayFilterBps?: number };
   
   return {
     hook: deployment.contracts.feeDynamicHook,
     poolData: encodeAbiParameters(DynamicFeeHookAbi, [
-      (dynamicFees.baseFee ?? 100) * 100,
-      (dynamicFees.maxFee ?? 500) * 100,
+      (dynamicFees.baseFee ?? 100) * 100,     // bps to uniBps
+      (dynamicFees.maxFee ?? 500) * 100,      // bps to uniBps
       BigInt(dynamicFees.referenceTickFilterPeriod ?? 30),
       BigInt(dynamicFees.resetPeriod ?? 120),
       dynamicFees.resetTickFilter ?? 200,
@@ -292,13 +295,13 @@ export function buildDeploymentConfig(
     },
     lockerConfig: {
       locker: deployment.contracts.locker,
-      lockerData,
       rewardAdmins: rewards.recipients.map((r) => r.admin),
       rewardRecipients: rewards.recipients.map((r) => r.recipient),
       rewardBps: rewards.recipients.map((r) => r.bps),
       tickLower: positions.map((p) => p.tickLower),
       tickUpper: positions.map((p) => p.tickUpper),
       positionBps: positions.map((p) => p.bps),
+      lockerData, // Must be last per ABI order
     },
     mevModuleConfig: {
       mevModule,
