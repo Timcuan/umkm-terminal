@@ -261,6 +261,87 @@ async function resumeFromIndex() {
 }
 
 // ============================================================================
+// Method 8: Custom Token Admin & Reward Recipient
+// ============================================================================
+
+async function customAdminRecipient() {
+  console.log('\n👤 Custom Admin & Recipient Demo\n');
+
+  const batch = new BatchDeployer();
+
+  // Method A: Per-token admin in config
+  console.log('Method A: Per-token admin in config');
+  const tokensA: BatchTokenConfig[] = [
+    {
+      name: 'Token A',
+      symbol: 'TKNA',
+      tokenAdmin: '0x1111111111111111111111111111111111111111',
+      rewardRecipient: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    },
+    {
+      name: 'Token B',
+      symbol: 'TKNB',
+      tokenAdmin: '0x2222222222222222222222222222222222222222',
+      // rewardRecipient defaults to tokenAdmin
+    },
+    {
+      name: 'Token C',
+      symbol: 'TKNC',
+      // Both default to deployer address
+    },
+  ];
+  console.log(`  Created ${tokensA.length} tokens with custom admins\n`);
+
+  // Method B: Generate with same admin for all
+  console.log('Method B: Generate with same admin for all');
+  const tokensB = batch.generateTokens(3, {
+    namePrefix: 'Managed Token',
+    symbolPrefix: 'MGD',
+    tokenAdmin: '0x3333333333333333333333333333333333333333',
+    rewardRecipient: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+  });
+  console.log(`  Generated ${tokensB.length} tokens with same admin\n`);
+
+  // Method C: Generate with custom admin per token
+  console.log('Method C: Generate with custom admin per token');
+  const tokensC = batch.generateTokensWithAdmins([
+    { name: 'Project A', symbol: 'PRJA', admin: '0x4444444444444444444444444444444444444444' },
+    { name: 'Project B', symbol: 'PRJB', admin: '0x5555555555555555555555555555555555555555' },
+    { name: 'Project C', symbol: 'PRJC', admin: '0x6666666666666666666666666666666666666666' },
+  ]);
+  console.log(`  Generated ${tokensC.length} tokens with different admins\n`);
+
+  // Method D: Apply admin to existing tokens
+  console.log('Method D: Apply admin to existing tokens');
+  const baseTokens = batch.generateTokens(3, { namePrefix: 'Base', symbolPrefix: 'BASE' });
+  const tokensD = batch.applyAdminToTokens(
+    baseTokens,
+    '0x7777777777777777777777777777777777777777',
+    '0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+  );
+  console.log(`  Applied admin to ${tokensD.length} tokens\n`);
+
+  // Method E: Apply different admins by index
+  console.log('Method E: Apply different admins by index');
+  const tokensE = batch.applyAdminsByIndex(baseTokens, {
+    0: { admin: '0x8888888888888888888888888888888888888888' },
+    1: {
+      admin: '0x9999999999999999999999999999999999999999',
+      recipient: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
+    },
+    2: { admin: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+  });
+  console.log(`  Applied different admins to ${tokensE.length} tokens\n`);
+
+  // Deploy with default admin (for tokens without specific admin)
+  console.log('Deploy with default admin option:');
+  console.log('  await batch.deploy(tokens, {');
+  console.log('    defaultTokenAdmin: "0x...",');
+  console.log('    defaultRewardRecipient: "0x...",');
+  console.log('  });');
+}
+
+// ============================================================================
 // Run Examples
 // ============================================================================
 
@@ -277,6 +358,7 @@ async function main() {
   await deployFromData();
   await advancedFeatures();
   await resumeFromIndex();
+  await customAdminRecipient();
 }
 
 main().catch(console.error);

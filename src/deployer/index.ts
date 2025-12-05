@@ -812,6 +812,12 @@ export interface BatchTokenConfig {
   description?: string;
   /** Custom ID for tracking (optional) */
   id?: string;
+  /** Token admin address (optional, defaults to deployer) */
+  tokenAdmin?: `0x${string}`;
+  /** Reward recipient address (optional, defaults to tokenAdmin or deployer) */
+  rewardRecipient?: `0x${string}`;
+  /** Reward allocation percentage (optional, defaults to 100) */
+  rewardAllocation?: number;
 }
 
 /** Batch deploy options */
@@ -832,6 +838,10 @@ export interface BatchDeployOptions {
   retryDelayMs?: number;
   /** Start from index (for resume, default: 0) */
   startIndex?: number;
+  /** Default token admin for all tokens (optional, defaults to deployer) */
+  defaultTokenAdmin?: `0x${string}`;
+  /** Default reward recipient for all tokens (optional, defaults to tokenAdmin) */
+  defaultRewardRecipient?: `0x${string}`;
   /** Callback for each deployment */
   onProgress?: (index: number, total: number, result: BatchDeployResult) => void;
   /** Callback on error */
@@ -853,6 +863,8 @@ export interface BatchDeployResult {
   error?: string;
   attempts: number;
   timestamp: number;
+  tokenAdmin?: `0x${string}`;
+  rewardRecipient?: `0x${string}`;
 }
 
 /** Summary of batch deployment */
@@ -938,12 +950,15 @@ export class BatchDeployer {
     const retries = options.retries ?? 2;
     const retryDelayMs = options.retryDelayMs ?? 5000;
     const startIndex = options.startIndex ?? 0;
+    const defaultTokenAdmin = options.defaultTokenAdmin;
+    const defaultRewardRecipient = options.defaultRewardRecipient;
     const onProgress = options.onProgress;
     const onError = options.onError;
     const onRetry = options.onRetry;
 
     // Create deployer for chain
     const deployer = createDeployer(chainId, this.privateKey);
+    const deployerAddress = deployer.address;
 
     const results: BatchDeployResult[] = [];
     const total = tokens.length;
@@ -969,18 +984,31 @@ export class BatchDeployer {
         }
 
         try {
+          // Determine tokenAdmin and rewardRecipient for this token
+          // Priority: token-specific > options default > deployer address
+          const tokenAdmin = token.tokenAdmin || defaultTokenAdmin || deployerAddress;
+          const rewardRecipient = token.rewardRecipient || defaultRewardRecipient || tokenAdmin;
+
           // Build config
           const deployConfig: SimpleDeployConfig = {
             name: token.name,
             symbol: token.symbol,
             image: token.image,
             description: token.description,
+            tokenAdmin,
             mev,
             fees: {
               type: 'static',
               clankerFee: feePercent,
               pairedFee: feePercent,
             },
+            // Set reward recipient if different from tokenAdmin
+            rewardRecipients: [
+              {
+                address: rewardRecipient,
+                allocation: token.rewardAllocation ?? 100,
+              },
+            ],
           };
 
           // Deploy
@@ -998,6 +1026,8 @@ export class BatchDeployer {
               explorerUrl: result.explorerUrl,
               attempts,
               timestamp: Date.now(),
+              tokenAdmin,
+              rewardRecipient,
             };
 
             results.push(batchResult);
@@ -1031,6 +1061,13 @@ export class BatchDeployer {
           error: lastError.message,
           attempts,
           timestamp: Date.now(),
+          tokenAdmin: token.tokenAdmin || defaultTokenAdmin || deployerAddress,
+          rewardRecipient:
+            token.rewardRecipient ||
+            defaultRewardRecipient ||
+            token.tokenAdmin ||
+            defaultTokenAdmin ||
+            deployerAddress,
         };
 
         results.push(batchResult);
@@ -1132,6 +1169,10 @@ export class BatchDeployer {
       image?: string;
       description?: string;
       startIndex?: number;
+      /** Token admin for all generated tokens */
+      tokenAdmin?: `0x${string}`;
+      /** Reward recipient for all generated tokens */
+      rewardRecipient?: `0x${string}`;
     }
   ): BatchTokenConfig[] {
     if (count < 1 || count > 100) {
@@ -1148,10 +1189,93 @@ export class BatchDeployer {
         symbol: `${template.symbolPrefix}${num}`,
         image: template.image,
         description: template.description,
+        tokenAdmin: template.tokenAdmin,
+        rewardRecipient: template.rewardRecipient,
       });
     }
 
     return tokens;
+  }
+
+  /**
+   * Generate tokens with custom admin/recipient per token
+   * Simple mode for different admins per token
+   *
+   * @example
+   * ```typescript
+   * const tokens = batch.generateTokensWithAdmins([
+   *   { name: 'Token A', symbol: 'TKNA', admin: '0x123...' },
+   *   { name: 'Token B', symbol: 'TKNB', admin: '0x456...' },
+   * ]);
+   * ```
+   */
+  generateTokensWithAdmins(
+    configs: Array<{
+      name: string;
+      symbol: string;
+      image?: string;
+      description?: string;
+      /** Token admin address */
+      admin?: `0x${string}`;
+      /** Reward recipient (defaults to admin) */
+      recipient?: `0x${string}`;
+    }>
+  ): BatchTokenConfig[] {
+    return configs.map((c, i) => ({
+      id: `token-${i}`,
+      name: c.name,
+      symbol: c.symbol,
+      image: c.image,
+      description: c.description,
+      tokenAdmin: c.admin,
+      rewardRecipient: c.recipient || c.admin,
+    }));
+  }
+
+  /**
+   * Apply admin/recipient to existing tokens
+   * Useful for bulk updating tokens with same admin
+   */
+  applyAdminToTokens(
+    tokens: BatchTokenConfig[],
+    admin: `0x${string}`,
+    recipient?: `0x${string}`
+  ): BatchTokenConfig[] {
+    return tokens.map((t) => ({
+      ...t,
+      tokenAdmin: t.tokenAdmin || admin,
+      rewardRecipient: t.rewardRecipient || recipient || admin,
+    }));
+  }
+
+  /**
+   * Apply different admins to tokens by index
+   *
+   * @example
+   * ```typescript
+   * const tokens = batch.generateTokens(3, { namePrefix: 'Token', symbolPrefix: 'TKN' });
+   * const withAdmins = batch.applyAdminsByIndex(tokens, {
+   *   0: { admin: '0x111...', recipient: '0xAAA...' },
+   *   1: { admin: '0x222...' },
+   *   2: { admin: '0x333...', recipient: '0xBBB...' },
+   * });
+   * ```
+   */
+  applyAdminsByIndex(
+    tokens: BatchTokenConfig[],
+    adminMap: Record<number, { admin: `0x${string}`; recipient?: `0x${string}` }>
+  ): BatchTokenConfig[] {
+    return tokens.map((t, i) => {
+      const config = adminMap[i];
+      if (config) {
+        return {
+          ...t,
+          tokenAdmin: config.admin,
+          rewardRecipient: config.recipient || config.admin,
+        };
+      }
+      return t;
+    });
   }
 
   private sleep(ms: number): Promise<void> {
