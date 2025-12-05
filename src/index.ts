@@ -161,6 +161,8 @@ export {
   createBaseDeployer,
   createEthDeployer,
   createArbDeployer,
+  createUnichainDeployer,
+  createMonadDeployer,
   type SimpleDeployConfig,
   type DeployOutput,
 } from './deployer/index.js';

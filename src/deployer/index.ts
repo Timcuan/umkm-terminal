@@ -497,3 +497,17 @@ export function createEthDeployer(privateKey?: `0x${string}`): Deployer {
 export function createArbDeployer(privateKey?: `0x${string}`): Deployer {
   return createDeployer(42161, privateKey);
 }
+
+/**
+ * Create deployer for Unichain
+ */
+export function createUnichainDeployer(privateKey?: `0x${string}`): Deployer {
+  return createDeployer(130, privateKey);
+}
+
+/**
+ * Create deployer for Monad
+ */
+export function createMonadDeployer(privateKey?: `0x${string}`): Deployer {
+  return createDeployer(10143, privateKey);
+}
