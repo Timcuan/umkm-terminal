@@ -155,15 +155,6 @@ export {
 } from './config/index.js';
 
 export {
-  // Batch deployers (multiple tokens on single chain)
-  BatchDeployer,
-  type BatchDeployOptions,
-  type BatchDeployResult,
-  type BatchDeploySummary,
-  type BatchTokenConfig,
-  batchDeploy,
-  batchDeployGenerated,
-  type ChainName,
   // Single-chain deployers
   createArbDeployer,
   createBaseDeployer,
@@ -173,12 +164,30 @@ export {
   createUnichainDeployer,
   Deployer,
   type DeployOutput,
-  // Multi-chain deployers
-  MultiChainDeployer,
-  type MultiDeployConfig,
-  type MultiDeployResult,
-  type MultiDeploySummary,
-  multiDeploy,
   quickDeploy,
   type SimpleDeployConfig,
 } from './deployer/index.js';
+
+// =============================================================================
+// Batch Deploy (Simple Template-Based)
+// =============================================================================
+
+export {
+  // Types
+  type BatchChain,
+  type BatchDefaults,
+  type BatchOptions,
+  type BatchResult,
+  type BatchSummary,
+  type BatchTemplate,
+  type BatchToken,
+  deployFromFile,
+  // Deploy functions
+  deployTemplate,
+  formatDuration,
+  // Template functions
+  generateTemplate,
+  loadTemplate,
+  saveResults,
+  saveTemplate,
+} from './batch/index.js';

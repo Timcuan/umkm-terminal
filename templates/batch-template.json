@@ -1,0 +1,32 @@
+{
+  "$schema": "./batch-schema.json",
+  "name": "My Batch Deploy",
+  "description": "Template for batch deploying multiple tokens",
+  "chain": "base",
+  "defaults": {
+    "fee": 5,
+    "mev": 8,
+    "tokenAdmin": "",
+    "rewardRecipient": ""
+  },
+  "tokens": [
+    {
+      "name": "Token One",
+      "symbol": "TKN1",
+      "image": "",
+      "description": "First token in batch"
+    },
+    {
+      "name": "Token Two",
+      "symbol": "TKN2",
+      "image": "",
+      "description": "Second token in batch"
+    },
+    {
+      "name": "Token Three",
+      "symbol": "TKN3",
+      "image": "",
+      "description": "Third token in batch"
+    }
+  ]
+}
