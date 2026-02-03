@@ -3,21 +3,21 @@
  * Secure multi-wallet storage with AES-256-GCM encryption and mnemonic support
  */
 
-// Types
-export type {
-  StoredWallet,
-  ValidationResult,
-  WalletBackup,
-  WalletInfo,
-  WalletOperationResult,
-  WalletStore,
-} from './types.js';
+// Services
+export { WalletStoreService } from './store.js';
+export { WalletBackupService } from './backup-service.js';
+export { EnvSyncService } from './env-sync-service.js';
+export { WalletMigrationService } from './migration-service.js';
+export { EncryptionService, type IEncryptionService } from './encryption-service.js';
 
 // Crypto Utilities
+// Aliases for backward compatibility
 export {
   decrypt,
+  decrypt as decryptSimple,
   decryptLegacy,
   encrypt,
+  encrypt as encryptSimple,
   formatAddress,
   generateMnemonicPhrase,
   generateWallet,
@@ -30,46 +30,75 @@ export {
   validatePrivateKey,
 } from './crypto.js';
 
-// Aliases for backward compatibility
-export { decrypt as decryptSimple, encrypt as encryptSimple } from './crypto.js';
+// Interactive Menu
+export { handleWalletManagement, showWalletMenu } from './menu.js';
 
-// Storage
+// Store Operations (backward compatibility)
 export {
   // Path helpers
-  getBackupDir,
-  getEnvPath,
-  getStorePath,
   getWalletDir,
-  // Wallet store (multi-wallet)
+  getStorePath,
+  // Store operations
+  loadWalletStore,
+  saveWalletStore,
   addWalletToStore,
   addWalletWithMnemonicToStore,
-  decryptWallet,
-  decryptWalletMnemonic,
+  removeWalletFromStore,
+  setActiveWallet,
   getActiveWallet,
   getAllWallets,
   getWalletByAddress,
-  loadWalletStore,
-  migrateEnvWalletToStore,
-  migrateOldWalletStore,
-  removeWalletFromStore,
-  saveWalletStore,
-  setActiveWallet,
-  updateWalletName,
+  decryptWallet,
+  decryptWalletMnemonic,
   walletHasMnemonic,
-  // .env sync
-  getCurrentWallet,
-  getEnvPrivateKey,
-  syncActiveWalletToEnv,
-  // Backup files
+  updateWalletName,
+} from './store.js';
+
+// Backup Operations (backward compatibility)
+export {
+  // Path helpers
+  getBackupDir,
+  // Backup operations
   createBackupFile,
-  importFromBackup,
   listBackupFiles,
   readBackupFile,
-} from './storage.js';
+  importFromBackup,
+} from './backup-service.js';
 
-// Aliases for backward compatibility
-export { getEnvPrivateKey as getCurrentPrivateKey } from './storage.js';
-export { syncActiveWalletToEnv as savePrivateKeyToEnv } from './storage.js';
+// Environment Sync (backward compatibility)
+export {
+  // Path helpers
+  getEnvPath,
+  // Env sync operations
+  syncActiveWalletToEnv,
+  syncActiveWalletToEnv as savePrivateKeyToEnv,
+  getEnvPrivateKey,
+  getEnvPrivateKey as getCurrentPrivateKey,
+  getCurrentWallet,
+} from './env-sync-service.js';
 
-// Interactive Menu
-export { handleWalletManagement, showWalletMenu } from './menu.js';
+// Migration (backward compatibility)
+export {
+  migrateEnvWalletToStore,
+  migrateOldWalletStore,
+} from './migration-service.js';
+
+// Transaction Pattern
+export {
+  WalletStoreTransaction,
+  createWalletTransaction,
+  withWalletTransaction,
+  syncActiveWalletWithKey,
+} from './transaction.js';
+
+// Types
+export type {
+  StoredWallet,
+  ValidationResult,
+  WalletBackup,
+  WalletInfo,
+  WalletOperationResult,
+  WalletStore,
+  WalletStoreTransactionOptions,
+  WalletTransactionResult,
+} from './types.js';

@@ -57,6 +57,41 @@ export type {
   TokenBase,
   TokenMetadata,
   VaultConfig,
+  // Comprehensive public API types
+  ClankerSDKOptions,
+  ClankerSDKConfig,
+  SDKDeployResult,
+  DeployerConstructorOptions,
+  SimpleDeployConfiguration,
+  DeploymentOptions,
+  EnhancedDeployOutput,
+  ValidatedBatchTemplate,
+  BatchTemplateDefaults,
+  BatchTokenConfiguration,
+  BatchDeploymentOptions,
+  BatchTokenResult,
+  BatchDeploymentSummary,
+  MultiWalletBatchConfiguration,
+  MultiWalletDeploymentOptions,
+  MultiWalletDeploymentResult,
+  // Configuration types
+  TokenConfiguration,
+  BatchConfiguration,
+  FeeConfiguration,
+  RewardRecipientConfiguration,
+  VaultConfiguration,
+  ErrorContext,
+  ServiceResultDetails,
+  // Deployment argument types
+  DeploymentArgs,
+  LegacyWallet,
+  ModernWallet,
+  MigratableWallet,
+  ValidatableTokenConfig,
+  QRCodeOptions,
+  // Runtime validation types
+  RuntimeValidationResult,
+  ValidationContext,
 } from './types/index.js';
 
 // =============================================================================
@@ -78,23 +113,29 @@ export {
 // Chains
 // =============================================================================
 
-export type { SupportedChainId } from './chains/index.js';
 export {
-  // Re-exported viem chains
+  // Custom chains
   arbitrum,
   base,
   // Chain IDs
   CHAIN_IDS,
+  type ChainFeatures,
+  getAllChainFeatures,
   // Utilities
   getChain,
+  // Feature detection
+  getChainFeatures,
+  getChainsWithFeature,
   getSupportedChainIds,
   getWethAddress,
+  hasDynamicFees,
+  hasMevProtection,
   isChainSupported,
   mainnet,
-  // Custom chains
   monad,
   // Supported chains map
   SUPPORTED_CHAINS,
+  type SupportedChainId,
   unichain,
   // WETH addresses
   WETH_ADDRESSES,
@@ -141,10 +182,34 @@ export {
   validatePoolPositions,
 } from './utils/index.js';
 
+// Runtime validation utilities
+export {
+  validateAddress,
+  validateChainId,
+  validateTokenName,
+  validateTokenSymbol,
+  validateFeeConfig,
+  validateRewardRecipient,
+  validateVaultConfig,
+  validateClankerTokenV4,
+  validateSimpleDeployConfiguration,
+  validateBatchDeploymentOptions,
+  combineValidationResults,
+  createValidationContext,
+  validateArray,
+} from './types/index.js';
+
 // =============================================================================
 // Config & Deployer
 // =============================================================================
 
+// Environment validator for easy .env configuration
+export {
+  checkRequiredVariables,
+  type EnvConfig,
+  getConfigSummary,
+  loadEnvConfig as loadEnvConfigV2,
+} from './config/env-validator.js';
 export {
   type ClankerEnvConfig,
   getChainName,
@@ -198,13 +263,24 @@ export {
 } from './batch/index.js';
 
 // =============================================================================
+// Multi-Wallet Batch Deploy
+// =============================================================================
+
+export {
+  type BatchDeployConfig,
+  BatchDeployConfigBuilder,
+  createBatchDeployConfig,
+  type MultiWalletBatchConfig,
+  MultiWalletBatchManager,
+} from './batch/multi-wallet-batch.js';
+
+// =============================================================================
 // Farcaster Module
 // =============================================================================
 
 export {
   type FarcasterLookupResult,
   type FarcasterUser,
-  type FarcasterWalletsResult,
   getProfilePicture,
   getUserByFid,
   getUserByUsername,
@@ -217,66 +293,134 @@ export {
 } from './farcaster/index.js';
 
 // =============================================================================
-// Wallet Management
+// Validation Services
+// =============================================================================
+
+export {
+  ValidationService,
+  type IValidationService,
+  type ValidationResult as ServiceValidationResult,
+  type PrivateKeyInfo,
+  type AddressInfo,
+  type MnemonicInfo,
+  type TokenConfigInfo,
+  validatePrivateKeyOrThrow,
+  validateAddressOrThrow,
+  validateTokenConfigOrThrow,
+  defaultValidationService,
+  RewardRecipientService,
+  type IRewardRecipientService,
+  type RewardRecipientConfig,
+  type NormalizedRewardRecipient,
+  type RewardRecipientResult,
+  normalizeRewardRecipientsOrThrow,
+  validateRewardRecipientsOrThrow,
+  defaultRewardRecipientService
+} from './services/index.js';
+
+// =============================================================================
+// Clanker API Integration
 // =============================================================================
 
 export {
   // Types
-  type StoredWallet,
-  type ValidationResult,
-  type WalletBackup,
-  type WalletInfo,
-  type WalletOperationResult,
-  type WalletStore,
+  type ClankerAPITokenRequest,
+  type ClankerAPIResponse,
+  type ClankerAPIConfig,
+  type OperationMethod,
+  // Errors
+  ClankerSDKError,
+  ClankerAPIError,
+  ConfigurationError,
+  AuthenticationError,
+  NetworkError,
+  ValidationError,
+  createAPIError,
+  createConfigError,
+  createAuthError,
+  createNetworkError,
+  createClankerValidationError,
+  // Core components
+  ClankerAPIMethod,
+  UnifiedExecutor,
+  ConfigManager,
+  FieldMapper,
+  // Enhanced Clanker classes
+  EnhancedClanker,
+  BackwardCompatibleClanker,
+  createEnhancedClanker,
+  createEnhancedClankerFromEnv,
+  createUnifiedExecutor,
+  createUnifiedExecutorFromEnv,
+} from './clanker-api/index.js';
+
+// =============================================================================
+// Wallet Management
+// =============================================================================
+
+export {
+  // Storage - multi-wallet
+  addWalletToStore,
+  addWalletWithMnemonicToStore,
+  // Storage - backup files
+  createBackupFile,
   // Crypto utilities
   decrypt,
   decryptLegacy,
   decryptSimple,
+  decryptWallet,
+  decryptWalletMnemonic,
   encrypt,
   encryptSimple,
   formatAddress,
   generateMnemonicPhrase,
   generateWallet,
   generateWalletWithMnemonic,
+  getActiveWallet,
   getAddressFromKey,
-  isLegacyEncryption,
-  mnemonicToAddress,
-  mnemonicToPrivateKey,
-  validateMnemonicPhrase,
-  validatePrivateKey,
+  getAllWallets,
   // Storage - paths
   getBackupDir,
-  getEnvPath,
-  getStorePath,
-  getWalletDir,
-  // Storage - multi-wallet
-  addWalletToStore,
-  addWalletWithMnemonicToStore,
-  decryptWallet,
-  decryptWalletMnemonic,
-  getActiveWallet,
-  getAllWallets,
-  getWalletByAddress,
-  loadWalletStore,
-  migrateEnvWalletToStore,
-  migrateOldWalletStore,
-  removeWalletFromStore,
-  saveWalletStore,
-  setActiveWallet,
-  updateWalletName,
-  walletHasMnemonic,
   // Storage - .env sync
   getCurrentPrivateKey,
   getCurrentWallet,
+  getEnvPath,
   getEnvPrivateKey,
-  savePrivateKeyToEnv,
-  syncActiveWalletToEnv,
-  // Storage - backup files
-  createBackupFile,
-  importFromBackup,
-  listBackupFiles,
-  readBackupFile,
+  getStorePath,
+  getWalletByAddress,
+  getWalletDir,
+  // Types
+  type StoredWallet,
   // Interactive menu
   handleWalletManagement,
+  importFromBackup,
+  isLegacyEncryption,
+  listBackupFiles,
+  loadWalletStore,
+  migrateEnvWalletToStore,
+  migrateOldWalletStore,
+  mnemonicToAddress,
+  mnemonicToPrivateKey,
+  readBackupFile,
+  removeWalletFromStore,
+  savePrivateKeyToEnv,
+  saveWalletStore,
+  setActiveWallet,
   showWalletMenu,
+  syncActiveWalletToEnv,
+  // Transaction Pattern
+  WalletStoreTransaction,
+  createWalletTransaction,
+  withWalletTransaction,
+  syncActiveWalletWithKey,
+  updateWalletName,
+  type ValidationResult,
+  validateMnemonicPhrase,
+  validatePrivateKey,
+  type WalletBackup,
+  type WalletInfo,
+  type WalletStore,
+  type WalletStoreTransactionOptions,
+  type WalletTransactionResult,
+  walletHasMnemonic,
 } from './wallet/index.js';

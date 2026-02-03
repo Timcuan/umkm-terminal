@@ -4,7 +4,8 @@
  */
 
 import { arbitrum, base, mainnet, unichain } from 'viem/chains';
-import { monad } from '../chains/index.js';
+
+const MONAD_CHAIN_ID = 10143;
 
 // ============================================================================
 // Types
@@ -102,8 +103,8 @@ export const DEPLOYMENTS: Record<number, ChainDeployment> = {
   },
 
   // Monad
-  [monad.id]: {
-    chainId: monad.id,
+  [MONAD_CHAIN_ID]: {
+    chainId: MONAD_CHAIN_ID,
     name: 'Monad',
     contracts: {
       factory: '0xF9a0C289Eab6B571c6247094a853810987E5B26D',

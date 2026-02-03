@@ -4,6 +4,8 @@
  */
 
 import { getAddress } from 'viem';
+import { errorLogger, NetworkError, wrapError } from '../errors/index.js';
+import { FarcasterApiClient, RetryHttpClient } from '../retry/index.js';
 
 // ============================================================================
 // Types
@@ -35,6 +37,7 @@ export interface FarcasterWalletsResult {
   success: boolean;
   fid?: number;
   username?: string;
+  user?: FarcasterUser;
   /** All wallet addresses (custody + verified + connected) */
   wallets: string[];
   error?: string;
@@ -90,6 +93,28 @@ function parseHubUserData(
 }
 
 // ============================================================================
+// API Client with Retry
+// ============================================================================
+
+// Create retry-enabled HTTP client for Farcaster APIs
+const farcasterHttpClient = new RetryHttpClient({
+  maxAttempts: 3,
+  initialDelay: 1000,
+  maxDelay: 5000,
+  timeout: 5000,
+  shouldRetry: (error, attempt) => {
+    // Retry on timeouts, 5xx errors, and rate limits
+    if (error instanceof NetworkError) {
+      return error.statusCode === 429 || (error.statusCode && error.statusCode >= 500) || false;
+    }
+    return attempt < 3 && error.message.includes('timeout');
+  },
+});
+
+// Create Farcaster API client
+const farcasterClient = new FarcasterApiClient();
+
+// ============================================================================
 // API Methods
 // ============================================================================
 
@@ -98,9 +123,8 @@ function parseHubUserData(
  */
 async function fetchFromHub(fid: number, hubUrl: string): Promise<FarcasterUser | null> {
   try {
-    const response = await fetch(`${hubUrl}/v1/userDataByFid?fid=${fid}`, {
+    const response = await farcasterHttpClient.fetch(`${hubUrl}/v1/userDataByFid?fid=${fid}`, {
       headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
     });
 
     if (!response.ok) return null;
@@ -112,7 +136,8 @@ async function fetchFromHub(fid: number, hubUrl: string): Promise<FarcasterUser 
     if (!data.messages || data.messages.length === 0) return null;
 
     return parseHubUserData(fid, data.messages);
-  } catch {
+  } catch (error) {
+    errorLogger.log(wrapError(error, `Failed to fetch from hub: ${hubUrl}`));
     return null;
   }
 }
@@ -122,36 +147,29 @@ async function fetchFromHub(fid: number, hubUrl: string): Promise<FarcasterUser 
  */
 async function fetchFromWarpcast(fid: number): Promise<FarcasterUser | null> {
   try {
-    const response = await fetch(`https://api.warpcast.com/v2/user?fid=${fid}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as {
+    const response = (await farcasterClient.getUserByFid(fid)) as {
       result?: {
         user?: {
           fid: number;
           username: string;
-          displayName?: string;
-          pfp?: { url?: string };
-          profile?: { bio?: { text?: string } };
-          followerCount?: number;
-          followingCount?: number;
-          verifications?: string[];
+          displayName: string;
+          pfp?: { url: string };
+          profile?: { bio?: { text: string } };
+          followerCount: number;
+          followingCount: number;
+          verifications: string[];
         };
         extras?: {
-          custodyAddress?: string;
-          ethWallets?: string[];
+          ethWallets: string[];
+          custodyAddress: string;
         };
       };
     };
 
-    if (!data.result?.user) return null;
+    if (!response.result?.user) return null;
 
-    const u = data.result.user;
-    const extras = data.result.extras;
+    const u = response.result.user;
+    const extras = response.result.extras;
 
     return {
       fid: u.fid,
@@ -165,7 +183,8 @@ async function fetchFromWarpcast(fid: number): Promise<FarcasterUser | null> {
       connectedAddresses: extras?.ethWallets,
       custodyAddress: extras?.custodyAddress,
     };
-  } catch {
+  } catch (error) {
+    errorLogger.log(wrapError(error, `Failed to fetch user by FID: ${fid}`));
     return null;
   }
 }
@@ -178,31 +197,21 @@ async function fetchByUsernameFromWarpcast(username: string): Promise<FarcasterU
     const cleanUsername = username.replace(/^@/, '').trim().toLowerCase();
     if (!cleanUsername) return null;
 
-    const response = await fetch(
-      `https://api.warpcast.com/v2/user-by-username?username=${cleanUsername}`,
-      {
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(5000),
-      }
-    );
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as {
+    const data = (await farcasterClient.getUserByUsername(cleanUsername)) as {
       result?: {
         user?: {
           fid: number;
           username: string;
-          displayName?: string;
-          pfp?: { url?: string };
-          profile?: { bio?: { text?: string } };
-          followerCount?: number;
-          followingCount?: number;
-          verifications?: string[];
+          displayName: string;
+          pfp?: { url: string };
+          profile?: { bio?: { text: string } };
+          followerCount: number;
+          followingCount: number;
+          verifications: string[];
         };
         extras?: {
-          custodyAddress?: string;
-          ethWallets?: string[];
+          ethWallets: string[];
+          custodyAddress: string;
         };
       };
     };
@@ -224,7 +233,8 @@ async function fetchByUsernameFromWarpcast(username: string): Promise<FarcasterU
       connectedAddresses: extras?.ethWallets,
       custodyAddress: extras?.custodyAddress,
     };
-  } catch {
+  } catch (error) {
+    errorLogger.log(wrapError(error, `Failed to fetch user by username: ${username}`));
     return null;
   }
 }
@@ -332,35 +342,34 @@ async function fetchByUsernameFromNeynar(username: string): Promise<FarcasterUse
 // ============================================================================
 
 /**
- * Get Farcaster user by FID
- * Tries multiple sources for reliability
+ * Fetch user by FID with multiple fallback sources
  */
 export async function getUserByFid(fid: number): Promise<FarcasterLookupResult> {
-  if (!fid || fid <= 0) {
-    return { success: false, error: 'Invalid FID' };
-  }
+  const sources = [
+    { name: 'Warpcast API', fn: () => fetchFromWarpcast(fid) },
+    { name: 'Neynar API', fn: () => fetchFromNeynar(fid) },
+    { name: 'Hub API', fn: () => fetchFromHub(fid, PUBLIC_HUBS[0]) },
+  ];
 
-  // Try Warpcast first (most reliable)
-  const warpcastUser = await fetchFromWarpcast(fid);
-  if (warpcastUser?.username) {
-    return { success: true, user: warpcastUser, source: 'warpcast' };
-  }
+  let lastError: Error | undefined;
 
-  // Try Neynar
-  const neynarUser = await fetchFromNeynar(fid);
-  if (neynarUser?.username) {
-    return { success: true, user: neynarUser, source: 'neynar' };
-  }
-
-  // Try public hubs
-  for (const hub of PUBLIC_HUBS) {
-    const hubUser = await fetchFromHub(fid, hub);
-    if (hubUser?.username) {
-      return { success: true, user: hubUser, source: hub };
+  for (const source of sources) {
+    try {
+      const user = await source.fn();
+      if (user) {
+        return { success: true, user, source: source.name };
+      }
+    } catch (error) {
+      lastError = error as Error;
+      errorLogger.log(wrapError(error, `Failed to fetch from ${source.name}`));
+      // Continue to next source
     }
   }
 
-  return { success: false, error: 'User not found' };
+  return {
+    success: false,
+    error: lastError?.message || 'All sources failed',
+  };
 }
 
 /**
@@ -426,7 +435,7 @@ export async function validateFid(fid: number): Promise<boolean> {
  */
 export async function validateUsername(username: string): Promise<number | null> {
   const result = await getUserByUsername(username);
-  return result.success ? result.user?.fid ?? null : null;
+  return result.success ? (result.user?.fid ?? null) : null;
 }
 
 /**
@@ -434,7 +443,7 @@ export async function validateUsername(username: string): Promise<number | null>
  */
 export async function getProfilePicture(fid: number): Promise<string | null> {
   const result = await getUserByFid(fid);
-  return result.success ? result.user?.pfpUrl ?? null : null;
+  return result.success ? (result.user?.pfpUrl ?? null) : null;
 }
 
 // ============================================================================
@@ -485,33 +494,50 @@ export async function getUserWallets(input: string | number): Promise<FarcasterW
 
   const user = result.user;
   const walletsSet = new Set<string>();
+  const orderedWallets: string[] = [];
 
   // Add custody address (primary wallet)
-  if (user.custodyAddress) {
-    walletsSet.add(user.custodyAddress.toLowerCase());
+  if (user.custodyAddress?.startsWith('0x')) {
+    const lower = user.custodyAddress.toLowerCase();
+    if (!walletsSet.has(lower)) {
+      walletsSet.add(lower);
+      orderedWallets.push(lower);
+    }
   }
 
   // Add verified addresses
   if (user.verifiedAddresses) {
-    for (const addr of user.verifiedAddresses) {
-      if (addr?.startsWith('0x')) {
-        walletsSet.add(addr.toLowerCase());
+    const sortedVerified = user.verifiedAddresses
+      .filter((addr): addr is string => typeof addr === 'string' && addr.startsWith('0x'))
+      .map((addr) => addr.toLowerCase())
+      .sort();
+
+    for (const addr of sortedVerified) {
+      if (!walletsSet.has(addr)) {
+        walletsSet.add(addr);
+        orderedWallets.push(addr);
       }
     }
   }
 
   // Add connected addresses
   if (user.connectedAddresses) {
-    for (const addr of user.connectedAddresses) {
-      if (addr?.startsWith('0x')) {
-        walletsSet.add(addr.toLowerCase());
+    const sortedConnected = user.connectedAddresses
+      .filter((addr): addr is string => typeof addr === 'string' && addr.startsWith('0x'))
+      .map((addr) => addr.toLowerCase())
+      .sort();
+
+    for (const addr of sortedConnected) {
+      if (!walletsSet.has(addr)) {
+        walletsSet.add(addr);
+        orderedWallets.push(addr);
       }
     }
   }
 
   // Convert to array and apply EIP-55 checksum
   const wallets: string[] = [];
-  for (const addr of walletsSet) {
+  for (const addr of orderedWallets) {
     try {
       // Apply checksum using viem's getAddress
       const checksummed = getAddress(addr as `0x${string}`);
@@ -525,6 +551,7 @@ export async function getUserWallets(input: string | number): Promise<FarcasterW
     success: true,
     fid: user.fid,
     username: user.username,
+    user,
     wallets,
   };
 }

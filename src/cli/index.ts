@@ -5,11 +5,13 @@
  */
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import chalk from 'chalk';
 import 'dotenv/config';
 import { privateKeyToAccount } from 'viem/accounts';
+import { buildQROptions } from '../types/deployment-args.js';
 import {
   type BatchChain,
   type BatchTemplate,
@@ -21,9 +23,13 @@ import {
   saveTemplate,
 } from '../batch/index.js';
 import { CHAIN_IDS } from '../chains/index.js';
-import { getUserWallets, resolveUser } from '../farcaster/index.js';
 import { getChainName, getExplorerUrl } from '../config/index.js';
 import { Deployer } from '../deployer/index.js';
+import { getUserWallets, resolveUser } from '../farcaster/index.js';
+import { DeployAnimation, MiningAnimation } from '../utils/animation.js';
+import { getCurrentWallet, handleWalletManagement } from '../wallet/index.js';
+import { SpoofingCLI } from './spoofing-cli.js';
+import { FeeConfigManager, loadFeeConfigFromEnv } from '../config/fee-config.js';
 import {
   estimateVanityDifficulty,
   formatDuration,
@@ -33,7 +39,41 @@ import {
   type VanityMode,
   validateVanityPattern,
 } from './vanity.js';
-import { getCurrentWallet, handleWalletManagement } from '../wallet/index.js';
+
+// ============================================================================
+// Fee Configuration Helpers
+// ============================================================================
+
+function getFeeDisplayText(info: TokenInfo): string {
+  switch (info.feeType) {
+    case 'dynamic':
+      return '1-5% (auto-adjust based on volatility)';
+    case 'flat':
+      return `${info.feePercentage}% (fixed for both tokens)`;
+    case 'custom':
+      return `${info.feePercentage}% (custom for both tokens)`;
+    default:
+      return `${info.feePercentage}% (both Token & WETH)`;
+  }
+}
+
+function getFeePercentageFromEnv(): number {
+  const feeType = process.env.FEE_TYPE || 'dynamic';
+  
+  switch (feeType) {
+    case 'dynamic':
+      // For dynamic, use current calculated fee or base fee
+      const feeManager = new FeeConfigManager(loadFeeConfigFromEnv());
+      const currentFees = feeManager.getCurrentFees();
+      return currentFees.tokenFee;
+    case 'flat':
+      return Number(process.env.FLAT_FEE_PERCENTAGE) || 3.0;
+    case 'custom':
+      return Number(process.env.CUSTOM_FEE_PERCENTAGE) || 5.0;
+    default:
+      return 3.0; // Default flat fee
+  }
+}
 
 // ============================================================================
 // Constants & Environment Detection
@@ -76,10 +116,15 @@ const CHAIN_OPTIONS = [
   { name: 'Monad (10143)', value: 10143 },
 ];
 
-// ASCII spinner frames (no emoji)
-const SPINNER_FRAMES = ['|', '/', '-', '\\'];
+const DEXSCREENER_CHAIN_SLUG_BY_CHAIN_ID: Record<number, string> = {
+  8453: 'base',
+  1: 'ethereum',
+  42161: 'arbitrum',
+  130: 'unichain',
+  10143: 'monad',
+};
 
-// Progress bar helper
+// Progress bar helper (using new animation system)
 function createProgressBar(progress: number, width: number = 20): string {
   const filled = Math.round(progress * width);
   const empty = width - filled;
@@ -88,170 +133,107 @@ function createProgressBar(progress: number, width: number = 20): string {
   return `[${filledBar}${emptyBar}]`;
 }
 
-// Animated mining display with proper ASCII art
-class MiningAnimation {
-  private frameIndex = 0;
-  private startTime = Date.now();
-  private interval: NodeJS.Timeout | null = null;
-  private currentAttempts = 0;
-  private pattern = '';
-  private maxTime: number;
+function validateTokenSymbolInput(value: string): true | string {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Symbol is required';
+  // Allow any characters including emojis, special characters, lowercase, etc.
+  // No length restriction - let the user decide
+  return true;
+}
 
-  constructor(pattern: string, maxTimeMs: number = 30000) {
-    this.pattern = pattern;
-    this.maxTime = maxTimeMs;
-  }
+type UxMode = 'normal' | 'fast' | 'ultra' | 'expert';
+type CliConfig = { uxMode: UxMode };
 
-  start(): void {
-    this.startTime = Date.now();
-    console.log('');
-    console.log(chalk.cyan('  +------------------------------------------+'));
-    console.log(
-      chalk.cyan('  |') +
-        chalk.white.bold('         VANITY MINING IN PROGRESS        ') +
-        chalk.cyan('|')
-    );
-    console.log(chalk.cyan('  +------------------------------------------+'));
-    console.log('');
+const CLI_CONFIG_PATH = path.join(os.homedir(), '.umkm-terminal.json');
 
-    // Only animate in TTY mode
-    if (ENABLE_ANIMATIONS) {
-      this.interval = setInterval(() => this.render(), 100);
+function readCliConfig(): CliConfig {
+  try {
+    if (!fs.existsSync(CLI_CONFIG_PATH)) {
+      return { uxMode: 'normal' };
     }
-  }
-
-  update(attempts: number): void {
-    this.currentAttempts = attempts;
-  }
-
-  private render(): void {
-    this.frameIndex = (this.frameIndex + 1) % SPINNER_FRAMES.length;
-    const spinner = SPINNER_FRAMES[this.frameIndex];
-    const elapsed = (Date.now() - this.startTime) / 1000;
-    const progress = Math.min(elapsed / (this.maxTime / 1000), 1);
-    const progressBar = createProgressBar(progress);
-    const timeLeft = Math.max(0, Math.ceil(this.maxTime / 1000 - elapsed));
-    const attemptsK = (this.currentAttempts / 1000).toFixed(0);
-
-    process.stdout.write(`\r${' '.repeat(70)}\r`);
-    process.stdout.write(
-      `  ${chalk.cyan(spinner)} ${chalk.yellow(this.pattern)} ${progressBar} ` +
-        `${chalk.white(`${timeLeft}s`)} ${chalk.cyan(`${attemptsK}k`)} tries`
-    );
-  }
-
-  stop(success: boolean, message: string): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
+    const raw = fs.readFileSync(CLI_CONFIG_PATH, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<CliConfig>;
+    const uxMode = parsed.uxMode;
+    if (uxMode === 'normal' || uxMode === 'fast' || uxMode === 'ultra') {
+      return { uxMode };
     }
-    process.stdout.write(`\r${' '.repeat(70)}\r`);
-    if (success) {
-      console.log(chalk.green(`  [OK] ${message}`));
-    } else {
-      console.log(chalk.yellow(`  [!] ${message}`));
-    }
-    console.log('');
+    return { uxMode: 'normal' };
+  } catch {
+    return { uxMode: 'normal' };
   }
 }
 
-// Animated deploy display with proper ASCII art
-class DeployAnimation {
-  private frameIndex = 0;
-  private interval: NodeJS.Timeout | null = null;
-  private dotCount = 0;
-  private step = 0;
-  private steps = [
-    'Preparing transaction',
-    'Signing with wallet',
-    'Broadcasting to network',
-    'Waiting for confirmation',
-    'Finalizing deployment',
-  ];
-
-  start(): void {
-    console.log('');
-    console.log(chalk.cyan('  +------------------------------------------+'));
-    console.log(
-      chalk.cyan('  |') +
-        chalk.white.bold('            DEPLOYING TOKEN               ') +
-        chalk.cyan('|')
-    );
-    console.log(chalk.cyan('  +------------------------------------------+'));
-    console.log('');
-
-    // Only animate in TTY mode
-    if (ENABLE_ANIMATIONS) {
-      this.interval = setInterval(() => this.render(), 200);
-    }
-  }
-
-  private render(): void {
-    this.frameIndex = (this.frameIndex + 1) % SPINNER_FRAMES.length;
-    const spinner = SPINNER_FRAMES[this.frameIndex];
-    const stepText = this.steps[this.step % this.steps.length];
-
-    // Animate dots
-    this.dotCount = (this.dotCount + 1) % 4;
-    const dots = '.'.repeat(this.dotCount);
-
-    // Cycle through steps every 8 frames
-    if (this.frameIndex === 0) {
-      this.step = (this.step + 1) % this.steps.length;
-    }
-
-    process.stdout.write(`\r${' '.repeat(60)}\r`);
-    process.stdout.write(`  ${chalk.cyan(spinner)} ${chalk.white(stepText)}${dots}`);
-  }
-
-  stop(success: boolean, message: string): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-    process.stdout.write(`\r${' '.repeat(60)}\r`);
-    if (success) {
-      console.log(chalk.green(`  [OK] ${message}`));
-    } else {
-      console.log(chalk.red(`  [FAIL] ${message}`));
-    }
-    console.log('');
-  }
+function writeCliConfig(config: CliConfig): void {
+  const safe: CliConfig = {
+    uxMode: config.uxMode,
+  };
+  fs.writeFileSync(CLI_CONFIG_PATH, `${JSON.stringify(safe, null, 2)}\n`, 'utf8');
 }
 
-// Main menu options - organized by category
+const ENV_FAST_MODE = process.env.FAST_MODE === 'true' || process.env.FAST_MODE === '1';
+const ENV_AUTO_CONFIRM_TRANSACTIONS =
+  process.env.AUTO_CONFIRM_TRANSACTIONS === 'true' || process.env.AUTO_CONFIRM_TRANSACTIONS === '1';
+const ENV_EXPERT_MODE = process.env.EXPERT_MODE === 'true' || process.env.EXPERT_MODE === '1';
+
+// Log deprecation warnings for old UX mode parameters
+if (ENV_FAST_MODE && !process.env.UX_MODE) {
+  console.warn('[DEPRECATED] FAST_MODE is deprecated. Use UX_MODE=fast instead.');
+}
+if (ENV_AUTO_CONFIRM_TRANSACTIONS && !process.env.UX_MODE) {
+  console.warn('[DEPRECATED] AUTO_CONFIRM_TRANSACTIONS is deprecated. Use UX_MODE=ultra instead.');
+}
+if (ENV_EXPERT_MODE && !process.env.UX_MODE) {
+  console.warn('[DEPRECATED] EXPERT_MODE is deprecated. Use UX_MODE=expert instead.');
+}
+
+const cliConfig = readCliConfig();
+let sessionUxMode: UxMode = (() => {
+  // Priority: UX_MODE > AUTO_CONFIRM_TRANSACTIONS > EXPERT_MODE > FAST_MODE > config
+  if (process.env.UX_MODE) {
+    return process.env.UX_MODE as UxMode;
+  }
+  if (ENV_AUTO_CONFIRM_TRANSACTIONS) return 'ultra';
+  if (ENV_EXPERT_MODE) return 'expert';
+  if (ENV_FAST_MODE) return 'fast';
+  return cliConfig.uxMode;
+})();
+
+function isFastMode(): boolean {
+  if (ENV_AUTO_CONFIRM_TRANSACTIONS) return true;
+  if (ENV_FAST_MODE) return true;
+  return sessionUxMode === 'fast' || sessionUxMode === 'ultra';
+}
+
+function isAutoConfirmTransactions(): boolean {
+  if (ENV_AUTO_CONFIRM_TRANSACTIONS) return true;
+  return sessionUxMode === 'ultra';
+}
+
+type ConfirmKind = 'transaction' | 'optional' | 'safety';
+
+async function maybeConfirm(
+  options: Parameters<typeof confirm>[0],
+  kind: ConfirmKind
+): Promise<boolean> {
+  if (kind === 'optional' && isFastMode()) {
+    return options.default ?? true;
+  }
+
+  if (kind === 'transaction' && isAutoConfirmTransactions()) {
+    return true;
+  }
+
+  return confirm(options);
+}
+
+// Main menu options - optimized and focused
 const MENU_OPTIONS = [
   { name: `${chalk.cyan('[1]')} Deploy New Token`, value: 'deploy' },
-  { name: `${chalk.green('[2]')} Batch Deploy (1-100 tokens)`, value: 'batch_deploy' },
-  { name: `${chalk.cyan('[3]')} Manage Tokens`, value: 'manage' },
-  { name: `${chalk.cyan('[4]')} Claim Rewards`, value: 'claim' },
-  { name: `${chalk.cyan('[5]')} Wallet Info`, value: 'wallet' },
+  { name: `${chalk.green('[2]')} Batch Farcaster Deploy`, value: 'batch_farcaster' },
   { name: chalk.gray('---'), value: 'separator', disabled: true },
-  { name: `${chalk.cyan('[6]')} Settings`, value: 'settings' },
-  { name: `${chalk.cyan('[7]')} Help`, value: 'help' },
+  { name: `${chalk.cyan('[3]')} Wallet Info`, value: 'wallet' },
+  { name: `${chalk.cyan('[4]')} Settings`, value: 'settings' },
   { name: `${chalk.cyan('[0]')} Exit`, value: 'exit' },
-];
-
-// Manage submenu
-const MANAGE_OPTIONS = [
-  { name: `${chalk.cyan('[1]')} Update Token Image`, value: 'update_image' },
-  { name: `${chalk.cyan('[2]')} Update Token Metadata`, value: 'update_metadata' },
-  { name: `${chalk.cyan('[3]')} Update Reward Recipient`, value: 'update_recipient' },
-  { name: `${chalk.cyan('[4]')} Update Reward Admin`, value: 'update_admin' },
-  { name: chalk.gray('---'), value: 'separator', disabled: true },
-  { name: `${chalk.yellow('[<]')} Back to Main Menu`, value: 'back' },
-];
-
-// Claim submenu
-const CLAIM_OPTIONS = [
-  { name: `${chalk.cyan('[1]')} Claim Trading Fees`, value: 'claim_fees' },
-  { name: `${chalk.cyan('[2]')} Claim Vaulted Tokens`, value: 'claim_vault' },
-  { name: `${chalk.cyan('[3]')} Check Available Rewards`, value: 'check_rewards' },
-  { name: chalk.gray('---'), value: 'separator', disabled: true },
-  { name: `${chalk.green('[4]')} My Deployed Tokens (scan fees)`, value: 'scan_deployed' },
-  { name: `${chalk.green('[5]')} Batch Claim (from results file)`, value: 'batch_claim' },
-  { name: chalk.gray('---'), value: 'separator', disabled: true },
-  { name: `${chalk.yellow('[<]')} Back to Main Menu`, value: 'back' },
 ];
 
 // ============================================================================
@@ -469,26 +451,6 @@ async function showMainMenu(): Promise<string> {
   });
 }
 
-async function showManageMenu(): Promise<string> {
-  console.log('');
-  console.log(chalk.white.bold('  MANAGE TOKENS'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  return await select({
-    message: 'Select an option:',
-    choices: MANAGE_OPTIONS.filter((o) => o.value !== 'separator'),
-  });
-}
-
-async function showClaimMenu(): Promise<string> {
-  console.log('');
-  console.log(chalk.white.bold('  CLAIM REWARDS'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  return await select({
-    message: 'Select an option:',
-    choices: CLAIM_OPTIONS.filter((o) => o.value !== 'separator'),
-  });
-}
-
 interface TokenInfo {
   // Basic
   name: string;
@@ -508,10 +470,9 @@ interface TokenInfo {
   tokenAdmin: string;
   rewardRecipient: string;
   rewardToken: 'Both' | 'Paired' | 'Clanker';
-  // Fees
-  feeType: 'static' | 'dynamic';
-  clankerFee: number;
-  pairedFee: number;
+  // Fees (unified for both tokens)
+  feeType: 'dynamic' | 'flat' | 'custom';
+  feePercentage: number; // Same fee for both Token and WETH
   // MEV
   mevBlockDelay: number;
   // Context
@@ -524,8 +485,248 @@ interface TokenInfo {
   vanitySalt?: `0x${string}`;
 }
 
-function getEnvConfig() {
+type PrepareTokenInfoResult = { ok: true; value: TokenInfo } | { ok: false; error: string };
+
+function prepareTokenInfo(raw: TokenInfo): PrepareTokenInfoResult {
+  const supportedChainIds = new Set<number>(CHAIN_OPTIONS.map((c) => c.value));
+
+  const chainId = Number(raw.chainId);
+  if (!Number.isFinite(chainId) || !supportedChainIds.has(chainId)) {
+    return { ok: false, error: `Unsupported chainId: ${raw.chainId}` };
+  }
+
+  const privateKey = String(raw.privateKey || '').trim();
+  if (!privateKey.startsWith('0x') || privateKey.length < 10) {
+    return { ok: false, error: 'PRIVATE_KEY is missing or invalid' };
+  }
+
+  const name = String(raw.name || '').trim();
+  if (!name) {
+    return { ok: false, error: 'Token name is required' };
+  }
+
+  const symbol = String(raw.symbol || '')
+    .trim()
+    .toUpperCase();
+  if (!symbol) {
+    return { ok: false, error: 'Token symbol is required' };
+  }
+
+  // Simplified validation - normalize and validate only essential fields
+  const image = normalizeImageUrl(String(raw.image || ''));
+  const description = String(raw.description || '').trim();
+  const website = String(raw.website || '').trim();
+  const farcaster = String(raw.farcaster || '').trim();
+  const twitter = String(raw.twitter || '').trim();
+  const zora = String(raw.zora || '').trim();
+  const instagram = String(raw.instagram || '').trim();
+
+  // Simplified admin validation - only validate if provided
+  const tokenAdmin = String(raw.tokenAdmin || '').trim();
+  if (tokenAdmin && !isValidAddress(tokenAdmin)) {
+    return { ok: false, error: 'Invalid token admin address' };
+  }
+
+  const rewardRecipient = String(raw.rewardRecipient || '').trim();
+  if (rewardRecipient && !isValidAddress(rewardRecipient)) {
+    return { ok: false, error: 'Invalid reward recipient address' };
+  }
+
+  // Simplified reward token validation
+  const rewardTokenInput = String(raw.rewardToken || 'Both').trim();
+  const rewardToken =
+    rewardTokenInput === 'Both' || rewardTokenInput === 'Paired' || rewardTokenInput === 'Clanker'
+      ? (rewardTokenInput as 'Both' | 'Paired' | 'Clanker')
+      : 'Both'; // Default to Both if invalid
+
+  // Simplified fee validation
+  const feeTypeInput = String(raw.feeType || 'dynamic').trim();
+  const feeType = feeTypeInput === 'dynamic' || feeTypeInput === 'flat' || feeTypeInput === 'custom' 
+    ? feeTypeInput : 'dynamic'; // Default to dynamic if invalid
+
+  const feePercentage = Number(raw.feePercentage) || 3.0; // Default to 3% if invalid
+
+  // Basic range validation for fees
+  if (feeType === 'dynamic' && (feePercentage < 1 || feePercentage > 5)) {
+    return { ok: false, error: 'Dynamic fees must be 1-5%' };
+  }
+  if (feeType === 'flat' && (feePercentage < 0.1 || feePercentage > 50)) {
+    return { ok: false, error: 'Flat fee must be 0.1-50%' };
+  }
+  if (feeType === 'custom' && (feePercentage < 1 || feePercentage > 99)) {
+    return { ok: false, error: 'Custom fee must be 1-99%' };
+  }
+
+  // Simplified MEV validation
+  const mevBlockDelay = Math.max(0, Math.min(50, Number(raw.mevBlockDelay) || 8));
+
+  // Simplified context validation
+  const interfaceName = String(raw.interfaceName || '').trim() || 'UMKM Terminal';
+  const platformName = String(raw.platformName || '').trim() || 'Clanker';
+
+  // Simplified vanity validation
+  const vanityModeInput = String(raw.vanityMode || 'off').trim();
+  const vanityMode =
+    vanityModeInput === 'off' || vanityModeInput === 'random' || vanityModeInput === 'custom'
+      ? (vanityModeInput as VanityMode)
+      : 'off'; // Default to off for Clanker compliance
+
+  const vanityPrefix = raw.vanityPrefix ? String(raw.vanityPrefix).trim() : undefined;
+  const vanitySuffix = raw.vanitySuffix ? String(raw.vanitySuffix).trim().toLowerCase() : undefined;
+
+  // Only validate vanity pattern if custom mode and suffix provided
+  if (vanityMode === 'custom' && vanitySuffix) {
+    const r = validateVanityPattern(vanitySuffix);
+    if (!r.success) {
+      return { ok: false, error: r.error || 'Invalid vanity suffix' };
+    }
+  }
+
+  const vanitySalt = raw.vanitySalt;
+
   return {
+    ok: true,
+    value: {
+      ...raw,
+      chainId,
+      privateKey,
+      name,
+      symbol,
+      image,
+      description,
+      website,
+      farcaster,
+      twitter,
+      zora,
+      instagram,
+      tokenAdmin,
+      rewardRecipient,
+      rewardToken,
+      feeType,
+      feePercentage,
+      mevBlockDelay,
+      interfaceName,
+      platformName,
+      vanityMode,
+      vanityPrefix,
+      vanitySuffix,
+      vanitySalt,
+    },
+  };
+}
+
+// ============================================================================
+// Address Resolution Utility
+// ============================================================================
+
+/**
+ * Resolve address defaults from deployer's private key
+ * Automatically derives deployer address and uses it as default for:
+ * - TOKEN_ADMIN (if not set)
+ * - REWARD_RECIPIENT (if not set)
+ * 
+ * @param config - Partial configuration with privateKey
+ * @returns Configuration with resolved address defaults
+ */
+function resolveAddressDefaults<T extends {
+  privateKey: string;
+  tokenAdmin: string;
+  rewardRecipient: string;
+  [key: string]: any;
+}>(config: T): T {
+  // Derive deployer address from PRIVATE_KEY
+  let deployerAddress = '';
+  try {
+    if (config.privateKey && config.privateKey.startsWith('0x')) {
+      const account = privateKeyToAccount(config.privateKey as `0x${string}`);
+      deployerAddress = account.address;
+    }
+  } catch (error) {
+    // If derivation fails, leave addresses as-is
+    console.error(chalk.yellow('  ⚠️  Could not derive deployer address from PRIVATE_KEY'));
+  }
+
+  // Use deployer address as default for TOKEN_ADMIN if not set
+  const tokenAdmin = config.tokenAdmin || deployerAddress;
+
+  // Use deployer address as default for REWARD_RECIPIENT if not set
+  const rewardRecipient = config.rewardRecipient || deployerAddress;
+
+  return {
+    ...config,
+    tokenAdmin,
+    rewardRecipient,
+  };
+}
+
+// ============================================================================
+// Configuration Validation
+// ============================================================================
+
+interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+/**
+ * Validate environment configuration parameters
+ * Checks required fields and validates value ranges
+ * 
+ * @param config - Configuration object to validate
+ * @returns Validation result with error messages
+ */
+function validateEnvConfig(config: {
+  privateKey: string;
+  chainId: number;
+  feeType: 'dynamic' | 'flat' | 'custom';
+  feePercentage: number;
+  [key: string]: any;
+}): ValidationResult {
+  const errors: string[] = [];
+
+  // Validate PRIVATE_KEY
+  if (!config.privateKey) {
+    errors.push('PRIVATE_KEY is required. Add PRIVATE_KEY=0x... to your .env file');
+  } else if (!config.privateKey.startsWith('0x')) {
+    errors.push('PRIVATE_KEY must start with 0x');
+  } else if (config.privateKey.length < 66) {
+    errors.push('PRIVATE_KEY appears to be invalid (too short)');
+  }
+
+  // Validate CHAIN_ID
+  const validChainIds = [1, 8453, 42161, 130, 10143];
+  if (!validChainIds.includes(config.chainId)) {
+    errors.push(`CHAIN_ID must be one of: ${validChainIds.join(', ')} (got ${config.chainId})`);
+  }
+
+  // Validate fee ranges based on FEE_TYPE
+  if (config.feeType === 'dynamic') {
+    if (config.feePercentage < 1 || config.feePercentage > 5) {
+      errors.push('Dynamic fees must be between 1-5%');
+    }
+  } else if (config.feeType === 'flat') {
+    if (config.feePercentage < 0.1 || config.feePercentage > 50) {
+      errors.push('Flat fee must be between 0.1-50%');
+    }
+  } else if (config.feeType === 'custom') {
+    if (config.feePercentage < 1 || config.feePercentage > 99) {
+      errors.push('Custom fee must be between 1-99%');
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+// ============================================================================
+// Environment Configuration
+// ============================================================================
+
+function getEnvConfig() {
+  // Parse environment variables
+  const config = {
     // Wallet
     privateKey: process.env.PRIVATE_KEY || '',
     chainId: Number(process.env.CHAIN_ID) || CHAIN_IDS.BASE,
@@ -539,12 +740,11 @@ function getEnvConfig() {
     // Admin & Rewards
     tokenAdmin: process.env.TOKEN_ADMIN || '',
     rewardRecipient: process.env.REWARD_RECIPIENT || '',
-    rewardToken: (process.env.REWARD_TOKEN || 'Paired') as 'Both' | 'Paired' | 'Clanker',
+    rewardToken: (process.env.REWARD_TOKEN || 'Both') as 'Both' | 'Paired' | 'Clanker',
 
-    // Fees
-    feeType: (process.env.FEE_TYPE || 'static') as 'static' | 'dynamic',
-    clankerFee: Number(process.env.CLANKER_FEE) || 5,
-    pairedFee: Number(process.env.PAIRED_FEE) || 5,
+    // Fees (unified for both tokens)
+    feeType: (process.env.FEE_TYPE || 'dynamic') as 'dynamic' | 'flat' | 'custom',
+    feePercentage: getFeePercentageFromEnv(),
 
     // MEV
     mevBlockDelay: Number(process.env.MEV_BLOCK_DELAY) || 8,
@@ -574,26 +774,251 @@ function getEnvConfig() {
     interfaceName: process.env.INTERFACE_NAME || 'UMKM Terminal',
     platformName: process.env.PLATFORM_NAME || 'Clanker',
   };
+
+  // ============================================================================
+  // Backward Compatibility - Deprecated Parameter Migration
+  // ============================================================================
+  // Support old parameter names with warnings
+  
+  // Migrate CLANKER_FEE → FEE_PERCENTAGE
+  if (process.env.CLANKER_FEE && !process.env.FEE_PERCENTAGE) {
+    console.warn(chalk.yellow('[DEPRECATED] CLANKER_FEE is deprecated. Use FEE_PERCENTAGE instead.'));
+    config.feePercentage = Number(process.env.CLANKER_FEE) || config.feePercentage;
+  }
+  
+  // Migrate PAIRED_FEE → FEE_PERCENTAGE (use same value as CLANKER_FEE)
+  if (process.env.PAIRED_FEE && !process.env.FEE_PERCENTAGE && !process.env.CLANKER_FEE) {
+    console.warn(chalk.yellow('[DEPRECATED] PAIRED_FEE is deprecated. Use FEE_PERCENTAGE instead.'));
+    config.feePercentage = Number(process.env.PAIRED_FEE) || config.feePercentage;
+  }
+  
+  // Migrate FAST_MODE → UX_MODE=fast
+  if (process.env.FAST_MODE === 'true' && !process.env.UX_MODE) {
+    console.warn(chalk.yellow('[DEPRECATED] FAST_MODE is deprecated. Use UX_MODE=fast instead.'));
+    process.env.UX_MODE = 'fast';
+  }
+  
+  // Migrate AUTO_CONFIRM_TRANSACTIONS → UX_MODE=ultra
+  if (process.env.AUTO_CONFIRM_TRANSACTIONS === 'true' && !process.env.UX_MODE) {
+    console.warn(chalk.yellow('[DEPRECATED] AUTO_CONFIRM_TRANSACTIONS is deprecated. Use UX_MODE=ultra instead.'));
+    process.env.UX_MODE = 'ultra';
+  }
+  
+  // Migrate EXPERT_MODE → UX_MODE=expert
+  if (process.env.EXPERT_MODE === 'true' && !process.env.UX_MODE) {
+    console.warn(chalk.yellow('[DEPRECATED] EXPERT_MODE is deprecated. Use UX_MODE=expert instead.'));
+    process.env.UX_MODE = 'expert';
+  }
+
+  // Resolve address defaults from deployer's private key
+  return resolveAddressDefaults(config);
 }
 
-async function collectTokenInfo(): Promise<TokenInfo> {
+async function collectTokenInfo(): Promise<TokenInfo | null> {
   const env = getEnvConfig();
 
   // Check required env vars
   if (!env.privateKey) {
     console.log(chalk.red('\n  Error: PRIVATE_KEY not set'));
     console.log(chalk.gray('  Add PRIVATE_KEY=0x... to your .env file\n'));
-    process.exit(1);
+    await input({ message: 'Press Enter...' });
+    return null;
   }
 
   // Check if template exists in .env
-  const hasTemplate = env.tokenName && env.tokenSymbol;
+  const hasTemplate = !!(env.tokenName && env.tokenSymbol);
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Step 1: Network Selection
+  // Single Token Deploy - Complete Configuration
   // ─────────────────────────────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.white.bold('  STEP 1: SELECT NETWORK'));
+  console.log(chalk.white.bold('  🚀 SINGLE TOKEN DEPLOY'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(chalk.gray('  Complete configuration for Clanker deployment'));
+  console.log('');
+
+  return await collectAdvancedTokenInfo(env, hasTemplate);
+}
+
+async function collectQuickTokenInfo(env: any, hasTemplate: boolean): Promise<TokenInfo> {
+  console.log('');
+  console.log(chalk.green.bold('  ⚡ QUICK DEPLOY MODE'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(chalk.gray('  Optimized for Clanker World verification'));
+  console.log('');
+
+  // Network (default to Base for quick deploy)
+  const chainId = env.chainId || CHAIN_IDS.BASE;
+  console.log(chalk.gray(`  Network: ${getChainName(chainId)} (default)`));
+
+  // Essential token info
+  if (hasTemplate) {
+    console.log(chalk.green('  [i] Using template from .env'));
+  }
+
+  const name = await input({
+    message: '📝 Token Name:',
+    default: env.tokenName || undefined,
+    validate: (v) => v.trim().length > 0 || 'Required',
+  });
+
+  const symbol = await input({
+    message: '🏷️  Token Symbol:',
+    default: env.tokenSymbol || undefined,
+    validate: validateTokenSymbolInput,
+  });
+
+  // Optimized image handling - single input, no complex validation
+  let image = '';
+  if (env.tokenImage) {
+    console.log(chalk.gray(`  🖼️  Image: ${env.tokenImage} (from .env)`));
+    image = env.tokenImage;
+  } else {
+    // Image is REQUIRED for Clanker launch bot
+    console.log(chalk.yellow('  ⚠️  Image URL is required for Clanker launch bot verification'));
+    image = await input({
+      message: '🖼️  Image URL (required):',
+      default: '',
+      validate: (v) => {
+        const trimmed = v.trim();
+        if (!trimmed) return 'Image URL is required for Clanker verification';
+        try {
+          new URL(trimmed);
+          if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+            return 'Image URL must start with http:// or https://';
+          }
+          return true;
+        } catch {
+          return 'Invalid URL format';
+        }
+      },
+    });
+  }
+
+  image = normalizeImageUrl(image);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Spoofing Configuration - Token Admin & Reward Recipient
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  🎯 SPOOFING CONFIGURATION'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(chalk.gray('  Required for spoofing operations'));
+  console.log('');
+
+  // Token Admin Address - Required for spoofing, must be manual input
+  console.log(chalk.cyan('  💡 Token Admin will appear as deployer in Clanker World'));
+  console.log('');
+  
+  const adminInput = await input({
+    message: '👤 Token Admin Address (0x...):',
+    default: env.tokenAdmin || '',
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (!trimmed) return 'Token admin address is required for spoofing operations';
+      return isValidAddress(trimmed) || 'Invalid address format (must be 0x + 40 hex chars)';
+    },
+  });
+  
+  let tokenAdmin: string;
+  tokenAdmin = adminInput;
+  console.log(chalk.green(`  ✓ Token Admin: ${tokenAdmin}`));
+  console.log(chalk.cyan(`  ℹ️  This address will be the deployer in Clanker World`));
+
+  // Reward Recipient Address
+  const recipientInput = await input({
+    message: '🎁 Reward Recipient Address (0x...):',
+    default: env.rewardRecipient || tokenAdmin || '',
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (!trimmed) return 'Reward recipient address is required for spoofing operations';
+      return isValidAddress(trimmed) || 'Invalid address format';
+    },
+  });
+
+  let rewardRecipient: string;
+  rewardRecipient = recipientInput;
+  console.log(chalk.green(`  ✓ Reward Recipient: ${rewardRecipient}`));
+
+  // Auto-generate optimized description for Clanker World
+  const description = env.tokenDescription || 
+    `${name} (${symbol}) - Deployed via UMKM Terminal on ${getChainName(chainId)}`;
+
+  // Optimized metadata for Clanker World verification
+  const metadata = {
+    name,
+    symbol,
+    description,
+    image,
+    // Essential social links only (Farcaster for Clanker ecosystem)
+    website: env.tokenWebsite || '',
+    farcaster: env.tokenFarcaster || '',
+    twitter: env.tokenTwitter || '',
+    // Clanker World verification context
+    interface: 'UMKM Terminal',
+    platform: 'Clanker',
+    version: '4.25.0',
+    deployedAt: new Date().toISOString(),
+  };
+
+  // Quick deploy summary - minimal and clean
+  console.log('');
+  console.log(chalk.white.bold('  📋 DEPLOYMENT READY'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.white('Name:')}        ${chalk.green(name)}`);
+  console.log(`  ${chalk.white('Symbol:')}      ${chalk.green(symbol)}`);
+  console.log(`  ${chalk.white('Network:')}     ${chalk.green(getChainName(chainId))}`);
+  console.log(`  ${chalk.white('Image:')}       ${image ? chalk.green('✓ Set') : chalk.gray('None')}`);
+  console.log(`  ${chalk.white('Admin:')}       ${chalk.green(tokenAdmin)}`);
+  console.log(`  ${chalk.white('Clanker:')}     ${chalk.cyan('Will show as deployer')}`);
+  console.log(`  ${chalk.white('Recipient:')}   ${rewardRecipient ? chalk.green('✓ Custom') : chalk.gray('Same as admin')}`);
+  console.log('');
+  console.log(chalk.gray('  Clanker World optimized:'));
+  console.log(chalk.gray('  • Fee: Dynamic 1-5% (market-responsive)'));
+  console.log(chalk.gray('  • MEV Protection: 8 blocks'));
+  console.log(chalk.gray('  • Vanity: Off (Standard B07)'));
+  console.log(chalk.gray('  • Rewards: Both (Token + WETH)'));
+  console.log(chalk.gray('  • Verification: UMKM Terminal + Clanker'));
+
+  return {
+    name,
+    symbol,
+    image,
+    chainId,
+    privateKey: env.privateKey,
+    description,
+    // Optimized social links - only essential ones
+    website: metadata.website,
+    farcaster: metadata.farcaster,
+    twitter: metadata.twitter,
+    zora: '', // Not essential for Clanker
+    instagram: '', // Not essential for Clanker
+    // Spoofing configuration - now included in Quick Deploy
+    tokenAdmin: tokenAdmin,
+    rewardRecipient: rewardRecipient,
+    rewardToken: 'Both' as const,
+    feeType: 'dynamic' as const,
+    feePercentage: 3.0, // Optimal dynamic fee
+    mevBlockDelay: 8, // Standard MEV protection
+    interfaceName: 'UMKM Terminal',
+    platformName: 'Clanker',
+    vanityMode: 'off' as const, // Standard Clanker B07
+    vanityPrefix: undefined,
+    vanitySuffix: undefined,
+  };
+}
+
+async function collectAdvancedTokenInfo(env: any, hasTemplate: boolean): Promise<TokenInfo> {
+  console.log('');
+  console.log(chalk.blue.bold('  🔧 COMPLETE DEPLOY CONFIGURATION'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(chalk.gray('  Full customization for Clanker deployment'));
+  console.log('');
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 1: Network & Token (Combined)
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log(chalk.white.bold('  STEP 1: NETWORK & TOKEN'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
   const chainId = await select({
@@ -616,25 +1041,42 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   const name = await input({
     message: 'Name:',
     default: env.tokenName || undefined,
-    validate: (v) => v.length > 0 || 'Required',
+    validate: (v) => v.trim().length > 0 || 'Required',
   });
 
   const symbol = await input({
     message: 'Symbol:',
     default: env.tokenSymbol || undefined,
-    validate: (v) => (v.length >= 2 && v.length <= 10) || '2-10 characters',
+    validate: validateTokenSymbolInput,
   });
 
-  // Image with smart input (use template if available, press Enter to use)
+  // Image with validation - REQUIRED for Clanker
   let image = '';
   if (env.tokenImage) {
-    image = await input({
-      message: 'Image URL:',
-      default: env.tokenImage,
-    });
+    console.log(chalk.gray(`  🖼️  Using image from .env: ${env.tokenImage}`));
+    image = env.tokenImage;
   } else {
-    image = await collectImageUrl();
+    console.log(chalk.yellow('  ⚠️  Image URL is required for Clanker launch bot verification'));
+    image = await input({
+      message: 'Image URL (required):',
+      default: '',
+      validate: (v) => {
+        const trimmed = v.trim();
+        if (!trimmed) return 'Image URL is required for Clanker verification';
+        try {
+          new URL(trimmed);
+          if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+            return 'Image URL must start with http:// or https://';
+          }
+          return true;
+        } catch {
+          return 'Invalid URL format';
+        }
+      },
+    });
   }
+
+  image = normalizeImageUrl(image);
 
   // Auto-generate description if not provided
   const defaultDescription =
@@ -647,10 +1089,60 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Step 3: Social Links & Base Ecosystem (auto-fill from .env)
+  // Step 3: Spoofing Configuration - Token Admin & Reward Recipient
   // ─────────────────────────────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.white.bold('  STEP 3: SOCIAL LINKS'));
+  console.log(chalk.white.bold('  STEP 3: SPOOFING CONFIGURATION'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(chalk.gray('  Required for spoofing operations'));
+  console.log('');
+
+  // Token Admin Address - Required for spoofing, must be manual input
+  console.log(chalk.cyan('  💡 Token Admin will appear as deployer in Clanker World'));
+  console.log('');
+  
+  const adminInput = await input({
+    message: '👤 Token Admin Address (0x...):',
+    default: env.tokenAdmin || '',
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (!trimmed || trimmed === '(deployer)') return true;
+      return isValidAddress(trimmed) || 'Invalid address format';
+    },
+  });
+  
+  let tokenAdmin = '';
+  if (adminInput && adminInput !== '(deployer)') {
+    tokenAdmin = adminInput;
+    console.log(chalk.green(`  ✓ Token Admin: ${tokenAdmin}`));
+  } else {
+    console.log(chalk.gray('  ✓ Token Admin: Deployer address (default)'));
+  }
+
+  // Reward Recipient Address
+  const recipientInput = await input({
+    message: '🎁 Reward Recipient Address (0x...):',
+    default: env.rewardRecipient || '(same as admin)',
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (!trimmed || trimmed === '(same as admin)') return true;
+      return isValidAddress(trimmed) || 'Invalid address format';
+    },
+  });
+
+  let rewardRecipient = '';
+  if (recipientInput && recipientInput !== '(same as admin)') {
+    rewardRecipient = recipientInput;
+    console.log(chalk.green(`  ✓ Reward Recipient: ${rewardRecipient}`));
+  } else {
+    console.log(chalk.gray('  ✓ Reward Recipient: Same as admin (default)'));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 4: Social Links & Base Ecosystem (auto-fill from .env)
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white.bold('  STEP 4: SOCIAL LINKS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(chalk.gray('  Press Enter to skip or use default'));
   console.log('');
@@ -663,7 +1155,7 @@ async function collectTokenInfo(): Promise<TokenInfo> {
 
   const farcasterInput = await input({
     message: 'Farcaster (username):',
-    default: process.env.TOKEN_FARCASTER || '',
+    default: env.tokenFarcaster || '',
   });
 
   // Validate Farcaster and fetch FID
@@ -674,7 +1166,7 @@ async function collectTokenInfo(): Promise<TokenInfo> {
     process.stdout.write(`\r${' '.repeat(40)}\r`);
     if (fcResult.fid) {
       console.log(chalk.green(`  ✓ Farcaster: ${fcResult.display}`));
-      farcaster = farcasterInput; // Keep original username
+      farcaster = String(fcResult.fid);
     } else if (fcResult.display) {
       console.log(chalk.yellow(`  ! ${fcResult.display}`));
     }
@@ -696,45 +1188,29 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Step 4: Advanced Settings
+  // Step 5: Advanced Settings
   // ─────────────────────────────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.white.bold('  STEP 4: ADVANCED SETTINGS'));
+  console.log(chalk.white.bold('  STEP 5: ADVANCED SETTINGS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
-  const customizeAdvanced = await confirm({
-    message: 'Customize advanced settings?',
-    default: false,
-  });
+  const customizeAdvanced = await maybeConfirm(
+    {
+      message: 'Customize advanced settings?',
+      default: false,
+    },
+    'optional'
+  );
 
-  let tokenAdmin = env.tokenAdmin;
-  let rewardRecipient = env.rewardRecipient;
   let rewardToken = env.rewardToken;
   let feeType = env.feeType;
-  let clankerFee = env.clankerFee;
-  let pairedFee = env.pairedFee;
+  let feePercentage = env.feePercentage;
   let mevBlockDelay = env.mevBlockDelay;
 
   if (customizeAdvanced) {
-    // Admin & Rewards
+    // Reward Token Selection
     console.log('');
-    console.log(chalk.gray('  -- Admin & Rewards --'));
-
-    const adminInput = await input({
-      message: 'Token Admin (0x...):',
-      default: tokenAdmin || '(deployer)',
-    });
-    if (adminInput && adminInput !== '(deployer)') {
-      tokenAdmin = adminInput;
-    }
-
-    const recipientInput = await input({
-      message: 'Reward Recipient (0x...):',
-      default: rewardRecipient || '(deployer)',
-    });
-    if (recipientInput && recipientInput !== '(deployer)') {
-      rewardRecipient = recipientInput;
-    }
+    console.log(chalk.gray('  -- Reward Token --'));
 
     rewardToken = await select({
       message: 'Reward Token:',
@@ -753,65 +1229,38 @@ async function collectTokenInfo(): Promise<TokenInfo> {
     console.log('');
 
     const feeMode = await select({
-      message: 'Fee Mode:',
+      message: 'Fee Configuration:',
       choices: [
-        { name: 'Static 5% (recommended)', value: 'static_default' },
-        { name: 'Static Custom (1-80%)', value: 'static_custom' },
-        { name: 'Dynamic (1-5% based on volatility)', value: 'dynamic' },
+        { name: 'Dynamic 1-5% (recommended)', value: 'dynamic_default' },
+        { name: 'Flat 3% (simple)', value: 'flat_default' },
+        { name: 'Custom (1-99%)', value: 'custom' },
       ],
-      default: 'static_default',
+      default: 'dynamic_default',
     });
 
-    if (feeMode === 'static_default') {
-      feeType = 'static';
-      clankerFee = 5;
-      pairedFee = 5;
-    } else if (feeMode === 'static_custom') {
-      feeType = 'static';
+    if (feeMode === 'dynamic_default') {
+      feeType = 'dynamic';
+      feePercentage = 3.0; // Default dynamic fee
+    } else if (feeMode === 'flat_default') {
+      feeType = 'flat';
+      feePercentage = 3.0; // Default flat fee
+    } else {
+      // Custom fee
+      feeType = 'custom';
+      console.log(chalk.gray('  Custom fee applies the same percentage to both Token and WETH'));
+      console.log('');
+
       const customFeeInput = await input({
-        message: 'Custom Fee % (1-80):',
+        message: 'Fee percentage for both tokens (1-99%):',
         default: '5',
         validate: (v) => {
           const n = Number(v);
-          return (n >= 1 && n <= 80) || 'Must be 1-80%';
+          return (n >= 1 && n <= 99) || 'Must be 1-99%';
         },
       });
-      const customFee = Number(customFeeInput);
-      clankerFee = customFee;
-      pairedFee = customFee;
-    } else {
-      // Dynamic fee
-      feeType = 'dynamic';
-      console.log(chalk.gray('  Dynamic fee auto-adjusts based on trading volume'));
-      console.log('');
+      feePercentage = Number(customFeeInput);
 
-      const baseInput = await input({
-        message: 'Base fee % (minimum):',
-        default: '1',
-        validate: (v) => {
-          const n = Number(v);
-          return (n >= 1 && n <= 10) || 'Must be 1-10%';
-        },
-      });
-      clankerFee = Number(baseInput);
-
-      const maxInput = await input({
-        message: 'Max fee % (maximum):',
-        default: '10',
-        validate: (v) => {
-          const n = Number(v);
-          return (n >= 1 && n <= 80) || 'Must be 1-80%';
-        },
-      });
-      pairedFee = Number(maxInput);
-
-      // Ensure max >= base
-      if (pairedFee < clankerFee) {
-        pairedFee = clankerFee;
-        console.log(chalk.yellow(`  Max fee adjusted to ${pairedFee}%`));
-      }
-
-      console.log(chalk.green(`  ✓ Dynamic fee: ${clankerFee}% - ${pairedFee}%`));
+      console.log(chalk.green(`  ✓ Custom fee: ${feePercentage}% (both Token and WETH)`));
     }
 
     // MEV Protection
@@ -831,22 +1280,23 @@ async function collectTokenInfo(): Promise<TokenInfo> {
     // Show current defaults
     console.log('');
     console.log(chalk.gray(`  Using defaults from .env:`));
-    console.log(chalk.gray(`  - Fee: ${feeType} (${clankerFee}%/${pairedFee}%)`));
+    console.log(chalk.gray(`  - Fee: ${feeType} (${feePercentage}% for both tokens)`));
     console.log(chalk.gray(`  - MEV: ${mevBlockDelay} blocks`));
     console.log(chalk.gray(`  - Rewards: ${rewardToken}`));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Step 5: Vanity Address (Suffix Only - 3 chars max)
+  // Step 6: Vanity Address (Suffix Only - 3 chars max)
   // ─────────────────────────────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.white.bold('  STEP 5: VANITY ADDRESS'));
+  console.log(chalk.white.bold('  STEP 6: VANITY ADDRESS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(chalk.gray('  Customize the last 3 digits of token address'));
   console.log(chalk.gray('  Off = Default Clanker (suffix B07)'));
   console.log('');
 
   // Vanity address - use .env default or select
+  // Default to 'off' for standard Clanker compliance (B07)
   let vanityMode: VanityMode = 'off';
   let vanitySuffix: string | undefined;
 
@@ -856,7 +1306,7 @@ async function collectTokenInfo(): Promise<TokenInfo> {
   vanityMode = (await select({
     message: 'Vanity address mode:',
     choices: [
-      { name: 'Off (default Clanker - suffix B07)', value: 'off' as const },
+      { name: 'Off (Standard Clanker B07 - Recommended)', value: 'off' as const },
       { name: 'Random suffix (e.g., 420, abc, 777)', value: 'random' as const },
       { name: 'Custom suffix (3 chars max)', value: 'custom' as const },
     ],
@@ -876,7 +1326,7 @@ async function collectTokenInfo(): Promise<TokenInfo> {
       validate: (v) => {
         if (!v) return 'Please enter a suffix';
         const result = validateVanityPattern(v);
-        return result.valid || result.error || 'Invalid pattern';
+        return result.success || result.error || 'Invalid pattern';
       },
     });
     vanitySuffix = suffixInput.toLowerCase();
@@ -889,90 +1339,6 @@ async function collectTokenInfo(): Promise<TokenInfo> {
         `  Estimated: ${formatDuration(estimate.estimatedTimeSeconds)} (~${estimate.estimatedAttempts.toLocaleString()} tries)`
       )
     );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Step 6: DOUBLE VERIFICATION (Clanker Requirements)
-  // ─────────────────────────────────────────────────────────────────────────
-  console.log('');
-  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
-  console.log(chalk.white.bold('  DEPLOYMENT VERIFICATION'));
-  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
-  console.log('');
-
-  // Get deployer address for display
-  const deployerAddress = privateKeyToAccount(env.privateKey as `0x${string}`).address;
-  const displayAdmin = tokenAdmin || deployerAddress;
-  const displayRecipient = rewardRecipient || deployerAddress;
-
-  // Token Info
-  console.log(chalk.cyan('  TOKEN INFO'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Name:')}        ${chalk.white(name)}`);
-  console.log(`  ${chalk.gray('Symbol:')}      ${chalk.white(symbol)}`);
-  console.log(
-    `  ${chalk.gray('Image:')}       ${image ? chalk.green('✓ Set') : chalk.yellow('○ Empty')}`
-  );
-  console.log(
-    `  ${chalk.gray('Description:')} ${description ? chalk.green('✓ Set') : chalk.gray('○ Empty')}`
-  );
-  console.log('');
-
-  // Chain & Network
-  console.log(chalk.cyan('  NETWORK'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Chain:')}       ${chalk.white(getChainName(chainId))}`);
-  console.log(
-    `  ${chalk.gray('Deployer:')}    ${deployerAddress.slice(0, 10)}...${deployerAddress.slice(-8)}`
-  );
-  console.log('');
-
-  // Rewards (Multi-Recipient)
-  console.log(chalk.cyan('  REWARDS (Multi-Recipient)'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(
-    `  ${chalk.gray('[1] Admin (0.1%):')}    ${displayAdmin.slice(0, 10)}...${displayAdmin.slice(-8)}`
-  );
-  console.log(
-    `  ${chalk.gray('[2] Recipient (99.9%):')} ${displayRecipient.slice(0, 10)}...${displayRecipient.slice(-8)}`
-  );
-  console.log(`  ${chalk.gray('Reward Token:')}        ${chalk.white(rewardToken)}`);
-  console.log('');
-
-  // Fees
-  console.log(chalk.cyan('  FEES'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Type:')}        ${chalk.white(feeType)}`);
-  const feeDisplayText =
-    feeType === 'dynamic'
-      ? `${clankerFee}% - ${pairedFee}% (auto-adjust)`
-      : `${clankerFee}% (Token & WETH)`;
-  console.log(`  ${chalk.gray('Fee %:')}       ${chalk.white(feeDisplayText)}`);
-  console.log(`  ${chalk.gray('MEV Delay:')}   ${chalk.white(`${mevBlockDelay} blocks`)}`);
-  console.log('');
-
-  // Clanker Verification
-  console.log(chalk.cyan('  CLANKER.WORLD VERIFICATION'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Interface:')}   ${chalk.white(env.interfaceName)}`);
-  console.log(`  ${chalk.gray('Platform:')}    ${chalk.white(env.platformName)}`);
-  if (vanitySuffix) {
-    console.log(
-      `  ${chalk.gray('Vanity:')}      ${chalk.white(`...${vanitySuffix.toUpperCase()}`)}`
-    );
-  }
-  console.log('');
-
-  // Final confirmation
-  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
-  const confirmDeploy = await confirm({
-    message: chalk.yellow('Confirm deployment? (This will cost gas)'),
-    default: false,
-  });
-
-  if (!confirmDeploy) {
-    console.log(chalk.yellow('\n  [!] Deployment cancelled\n'));
-    process.exit(0);
   }
 
   return {
@@ -988,13 +1354,12 @@ async function collectTokenInfo(): Promise<TokenInfo> {
     twitter,
     zora,
     instagram,
-    // Admin & Rewards
-    tokenAdmin,
-    rewardRecipient,
+    // Spoofing Configuration - now collected in Step 3
+    tokenAdmin: tokenAdmin,
+    rewardRecipient: rewardRecipient,
     rewardToken,
     feeType,
-    clankerFee,
-    pairedFee,
+    feePercentage,
     mevBlockDelay,
     interfaceName: env.interfaceName,
     platformName: env.platformName,
@@ -1017,14 +1382,24 @@ interface DeployResult {
 
 async function executeDeployment(info: TokenInfo): Promise<DeployResult> {
   const deployer = new Deployer({
-    privateKey: info.privateKey as `0x${string}`,
-    chainId: info.chainId,
-    mevBlockDelay: info.mevBlockDelay,
+    config: {
+      privateKey: info.privateKey as `0x${string}`,
+      chainId: info.chainId,
+      mevBlockDelay: info.mevBlockDelay,
+    }
   });
+
+  if (info.tokenAdmin && !isValidAddress(info.tokenAdmin)) {
+    return { success: false, error: 'Invalid token admin address' };
+  }
+
+  if (info.rewardRecipient && !isValidAddress(info.rewardRecipient)) {
+    return { success: false, error: 'Invalid reward recipient address' };
+  }
 
   // Use deployer address as fallback for admin/recipient
   const adminAddress = (info.tokenAdmin || deployer.address) as `0x${string}`;
-  const recipientAddress = (info.rewardRecipient || deployer.address) as `0x${string}`;
+  const recipientAddress = (info.rewardRecipient || adminAddress) as `0x${string}`;
 
   // Build socials object
   const socials: {
@@ -1040,19 +1415,19 @@ async function executeDeployment(info: TokenInfo): Promise<DeployResult> {
   if (info.zora) socials.zora = info.zora;
   if (info.instagram) socials.instagram = info.instagram;
 
-  // Multi-recipient setup:
-  // - Recipient 1: Token Admin gets 0.1% (10 bps)
-  // - Recipient 2: Reward Recipient gets 99.9% (9990 bps)
-  // Both receive fees in the same token type (Both = token + WETH)
+  // Multi-recipient setup for spoofing optimization:
+  // - Recipient 1: Token Admin gets 0.01% - Minimal admin allocation
+  // - Recipient 2: Reward Recipient gets 99.99% - Main recipient reward
+  // This configuration optimizes rewards for spoofing operations
   const rewardRecipients = [
     {
       address: adminAddress,
-      allocation: 0.1, // 0.1% for token admin
+      allocation: 0.01, // 0.01% for token admin (minimal allocation)
       rewardToken: info.rewardToken,
     },
     {
       address: recipientAddress,
-      allocation: 99.9, // 99.9% for reward recipient
+      allocation: 99.99, // 99.99% for reward recipient (main allocation)
       rewardToken: info.rewardToken,
     },
   ];
@@ -1060,7 +1435,7 @@ async function executeDeployment(info: TokenInfo): Promise<DeployResult> {
   const result = await deployer.deploy({
     name: info.name,
     symbol: info.symbol,
-    image: info.image,
+    image: info.image || undefined,
     description: info.description || undefined,
     socials: Object.keys(socials).length > 0 ? socials : undefined,
     tokenAdmin: adminAddress,
@@ -1069,13 +1444,12 @@ async function executeDeployment(info: TokenInfo): Promise<DeployResult> {
       info.feeType === 'dynamic'
         ? {
             type: 'dynamic',
-            baseFee: info.clankerFee, // clankerFee stores baseFee for dynamic
-            maxLpFee: info.pairedFee, // pairedFee stores maxFee for dynamic
+            baseFee: 1.0, // Dynamic base fee
+            maxLpFee: 5.0, // Dynamic max fee
           }
         : {
             type: 'static',
-            clankerFee: info.clankerFee,
-            pairedFee: info.pairedFee,
+            feePercentage: info.feePercentage, // Unified fee for both tokens
           },
     mev: info.mevBlockDelay,
     context: {
@@ -1116,10 +1490,7 @@ async function showDeployResult(info: TokenInfo, result: DeployResult): Promise<
   }
 
   // Get deployer address for Defined.fi link
-  const deployer = new Deployer({
-    privateKey: info.privateKey as `0x${string}`,
-    chainId: info.chainId,
-  });
+  const deployerAddress = privateKeyToAccount(info.privateKey as `0x${string}`).address;
 
   // Token info - compact
   console.log(
@@ -1129,10 +1500,11 @@ async function showDeployResult(info: TokenInfo, result: DeployResult): Promise<
   console.log('');
 
   // Links - compact
-  const definedUrl = `https://www.defined.fi/tokens/discover?creatorAddress=${deployer.address}`;
+  const definedUrl = `https://www.defined.fi/tokens/discover?creatorAddress=${deployerAddress}`;
+  const dexChainSlug = DEXSCREENER_CHAIN_SLUG_BY_CHAIN_ID[info.chainId] || 'base';
   console.log(`  ${chalk.gray('Defined:')} ${chalk.cyan(definedUrl)}`);
   console.log(
-    `  ${chalk.gray('Dex:')}     ${chalk.cyan(`https://dexscreener.com/base/${result.tokenAddress}`)}`
+    `  ${chalk.gray('Dex:')}     ${chalk.cyan(`https://dexscreener.com/${dexChainSlug}/${result.tokenAddress}`)}`
   );
   console.log(
     `  ${chalk.gray('Clanker:')} ${chalk.cyan(`https://clanker.world/clanker/${result.tokenAddress}`)}`
@@ -1142,7 +1514,15 @@ async function showDeployResult(info: TokenInfo, result: DeployResult): Promise<
   // QR Code for Defined.fi
   console.log(chalk.white.bold('  SCAN TO VIEW'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  await printQRCode(definedUrl);
+  try {
+    await printQRCode(definedUrl);
+  } catch (err) {
+    console.log(chalk.yellow('  [!] QR code unavailable'));
+    console.log(chalk.cyan(`  ${definedUrl}`));
+    if (err instanceof Error && err.message) {
+      console.log(chalk.gray(`  ${err.message}`));
+    }
+  }
   console.log('');
 }
 
@@ -1167,18 +1547,29 @@ async function printQRCode(url: string): Promise<void> {
       return;
     }
 
-    return new Promise((resolve) => {
-      generate(url, { small: true }, (code: string) => {
-        const lines = code.split('\n');
-        for (const line of lines) {
-          console.log(`  ${line}`);
-        }
-        resolve();
-      });
+    await new Promise<void>((resolve, reject) => {
+      try {
+        generate(
+          url,
+          buildQROptions({ small: true, errorCorrectLevel: 'M' }),
+          (code: string) => {
+            const lines = code.split('\n');
+            for (const line of lines) {
+              console.log(`  ${line}`);
+            }
+            resolve();
+          }
+        );
+      } catch (err) {
+        reject(err);
+      }
     });
-  } catch {
+  } catch (err) {
     // Fallback: just show URL
     console.log(chalk.cyan(`  ${url}`));
+    if (err instanceof Error && err.message) {
+      console.log(chalk.gray(`  ${err.message}`));
+    }
   }
 }
 
@@ -1192,68 +1583,108 @@ function showDeployError(error: string): void {
   console.log('');
 }
 
-async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_chain'> {
+function printDeploymentVerification(info: TokenInfo): void {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Streamlined Deployment Verification (Clanker Optimized)
+  // ─────────────────────────────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.white.bold('  SUMMARY'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  console.log(chalk.white.bold('  DEPLOYMENT READY'));
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  console.log('');
+
+  // Essential Info Only
+  console.log(chalk.cyan('  TOKEN DETAILS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Chain:')}     ${getChainName(info.chainId)}`);
-  console.log(`  ${chalk.gray('Token:')}     ${info.name} (${info.symbol})`);
-  if (info.image) console.log(`  ${chalk.gray('Image:')}     ${info.image.slice(0, 30)}...`);
-  if (info.description)
-    console.log(`  ${chalk.gray('Desc:')}      ${info.description.slice(0, 30)}...`);
-  console.log(
-    `  ${chalk.gray('Fee:')}       ${info.feeType} (${info.clankerFee}%/${info.pairedFee}%)`
-  );
-  console.log(`  ${chalk.gray('MEV:')}       ${info.mevBlockDelay} blocks`);
-  console.log(`  ${chalk.gray('Rewards:')}   ${info.rewardToken}`);
-  // Show vanity mode
+  console.log(`  ${chalk.gray('Name:')}        ${chalk.white(info.name)}`);
+  console.log(`  ${chalk.gray('Symbol:')}      ${chalk.white(info.symbol)}`);
+  console.log(`  ${chalk.gray('Network:')}     ${chalk.white(getChainName(info.chainId))}`);
+  console.log(`  ${chalk.gray('Fee:')}         ${chalk.white(getFeeDisplayText(info))}`);
+  console.log(`  ${chalk.gray('MEV:')}         ${chalk.white(`${info.mevBlockDelay} blocks`)}`);
+  console.log('');
+
+  // Clanker World Verification (Simplified)
+  console.log(chalk.cyan('  CLANKER WORLD VERIFICATION'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+  console.log(`  ${chalk.gray('Interface:')}   ${chalk.white(info.interfaceName)}`);
+  console.log(`  ${chalk.gray('Platform:')}    ${chalk.white(info.platformName)}`);
+  
   if (info.vanityMode === 'off') {
-    console.log(`  ${chalk.gray('Vanity:')}    Off (default Clanker B07)`);
-  } else if (info.vanityMode === 'random' || info.vanityMode === 'custom') {
-    console.log(
-      `  ${chalk.gray('Vanity:')}    Suffix: ${chalk.yellow(`...${(info.vanitySuffix || '').toUpperCase()}`)}`
-    );
+    console.log(`  ${chalk.gray('Vanity:')}      ${chalk.green('Standard B07 (Clanker verified)')}`);
+  } else if (info.vanitySuffix) {
+    console.log(`  ${chalk.gray('Vanity:')}      ${chalk.yellow(`...${info.vanitySuffix.toUpperCase()} (Custom)`)}`);
   }
   console.log('');
+}
 
-  const confirmed = await confirm({
-    message: 'Deploy?',
-    default: true,
-  });
+async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_chain'> {
+  let deployInfo: TokenInfo = { ...info };
+  const prepared = prepareTokenInfo(deployInfo);
+  if (!prepared.ok) {
+    showDeployError(prepared.error);
+
+    const nextAction = await select({
+      message: 'What next?',
+      choices: [
+        { name: 'Retry deployment', value: 'retry' },
+        { name: 'Try different chain', value: 'other_chain' },
+        { name: 'Back to menu', value: 'menu' },
+      ],
+    });
+
+    return nextAction as 'menu' | 'retry' | 'other_chain';
+  }
+  deployInfo = prepared.value;
+  printDeploymentVerification(deployInfo);
+
+  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+  const confirmed = await maybeConfirm(
+    {
+      message: chalk.yellow('Confirm deployment? (This will cost gas)'),
+      default: false,
+    },
+    'transaction'
+  );
 
   if (!confirmed) {
-    console.log(chalk.gray('\n  Cancelled.\n'));
+    console.log(chalk.yellow('\n  [!] Deployment cancelled\n'));
     return 'menu';
   }
 
   // Mine vanity salt if vanity mode is random or custom
-  if (info.vanityMode !== 'off' && !info.vanitySalt && info.vanitySuffix) {
+  // NOTE: For standard Clanker compliance (B07), single deploy should avoid vanity patterns
+  if (deployInfo.vanityMode !== 'off' && !deployInfo.vanitySalt && deployInfo.vanitySuffix) {
+    // Warn user about Clanker standard compliance
+    if (deployInfo.vanitySuffix.toLowerCase() === 'b07') {
+      console.log(chalk.yellow('\n  [!] Warning: Using B07 suffix conflicts with Clanker standard'));
+      console.log(chalk.gray('      Consider using a different pattern or disabling vanity mode\n'));
+    }
+    
     // Need tokenAdmin for proper salt computation
-    const tempDeployer = new Deployer({
-      privateKey: info.privateKey as `0x${string}`,
-      chainId: info.chainId,
-    });
-    const tokenAdmin = (info.tokenAdmin || tempDeployer.address) as `0x${string}`;
+    const deployerAddress = privateKeyToAccount(deployInfo.privateKey as `0x${string}`).address;
+    const tokenAdmin = (deployInfo.tokenAdmin || deployerAddress) as `0x${string}`;
 
-    const patternDisplay = `...${info.vanitySuffix.toUpperCase()}`;
+    const patternDisplay = `...${deployInfo.vanitySuffix.toUpperCase()}`;
     const miningAnim = new MiningAnimation(patternDisplay, MAX_MINING_TIME_MS);
+
     miningAnim.start();
 
     try {
       const result = await mineVanitySalt({
-        chainId: info.chainId,
+        chainId: deployInfo.chainId,
         tokenAdmin,
         prefix: undefined,
-        suffix: info.vanitySuffix,
+        suffix: deployInfo.vanitySuffix,
         maxAttempts: 5000000,
         maxTimeMs: MAX_MINING_TIME_MS,
         onProgress: (attempts) => {
+          // Update attempts count for display
           miningAnim.update(attempts);
         },
       });
 
       if (result) {
-        info.vanitySalt = result.salt;
+        deployInfo.vanitySalt = result.salt;
         miningAnim.stop(
           true,
           `Found in ${result.attempts.toLocaleString()} attempts (${result.timeMs}ms)`
@@ -1261,21 +1692,22 @@ async function deployToken(info: TokenInfo): Promise<'menu' | 'retry' | 'other_c
       } else {
         miningAnim.stop(false, 'Timeout - using random address');
       }
-    } catch {
+    } catch (_error) {
       miningAnim.stop(false, 'Mining failed - using random address');
     }
   }
 
   // Deploy with cool animation
   const deployAnim = new DeployAnimation();
+
   deployAnim.start();
 
   try {
-    const result = await executeDeployment(info);
+    const result = await executeDeployment(deployInfo);
 
     if (result.success && result.tokenAddress) {
       deployAnim.stop(true, 'Token deployed successfully!');
-      await showDeployResult(info, result);
+      await showDeployResult(deployInfo, result);
 
       // Post-deploy options
       const nextAction = await select({
@@ -1358,25 +1790,20 @@ function showHelp(): void {
   // Features
   console.log(chalk.cyan('  FEATURES'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.green('[1]')} Deploy New Token    - Single token deployment`);
-  console.log(`  ${chalk.green('[2]')} Batch Deploy        - Deploy 1-100 tokens`);
-  console.log(`  ${chalk.green('[3]')} Manage Tokens       - Update image/metadata`);
-  console.log(`  ${chalk.green('[4]')} Claim Rewards       - Claim trading fees`);
-  console.log(`  ${chalk.green('[5]')} Wallet Info         - Check balances`);
+  console.log(`  ${chalk.green('[1]')} Deploy New Token         - Single token deployment`);
+  console.log(`  ${chalk.green('[2]')} Batch Farcaster Deploy   - Deploy from Farcaster profiles`);
+  console.log(`  ${chalk.green('[3]')} Wallet Info              - Check balances`);
+  console.log(`  ${chalk.green('[4]')} Settings                 - Configure terminal`);
   console.log('');
 
   // Batch Deploy
-  console.log(chalk.cyan('  BATCH DEPLOY'));
+  console.log(chalk.cyan('  BATCH FARCASTER DEPLOY'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log('  Generate Template:');
-  console.log('    1. Network selection (Base, ETH, Arbitrum, etc)');
-  console.log('    2. Token count (1-100)');
-  console.log('    3. Token details (name, symbol, image, desc)');
-  console.log('    4. Social links (website, twitter, telegram, etc)');
-  console.log('    5. Admin & rewards addresses');
-  console.log('    6. Fee configuration (1-80%)');
-  console.log('    7. MEV protection (0-20 blocks)');
-  console.log('    8. Vault settings (optional)');
+  console.log('  Generate from Farcaster:');
+  console.log('    1. Enter Farcaster username');
+  console.log('    2. Fetch profile data automatically');
+  console.log('    3. Generate template with profile info');
+  console.log('    4. Customize token details');
   console.log('');
   console.log('  Deploy from Template:');
   console.log('    - Select from ./templates/ folder');
@@ -1418,10 +1845,12 @@ function showHelp(): void {
   console.log('    REWARD_TOKEN         Both | Paired | Clanker');
   console.log('');
   console.log(`  ${chalk.gray('Fees & MEV:')}`);
-  console.log('    FEE_TYPE             static | dynamic');
-  console.log('    CLANKER_FEE          Fee % (1-80, default: 5)');
-  console.log('    PAIRED_FEE           Paired fee % (1-80)');
-  console.log('    MEV_BLOCK_DELAY      MEV delay (0-20, default: 8)');
+  console.log('    FEE_TYPE             dynamic | flat | custom');
+  console.log('    DYNAMIC_BASE_FEE     Base fee % (1-5, default: 1)');
+  console.log('    DYNAMIC_MAX_FEE      Max fee % (1-5, default: 5)');
+  console.log('    FLAT_FEE_PERCENTAGE  Flat fee % (0.1-50, default: 3)');
+  console.log('    CUSTOM_FEE_PERCENTAGE Custom fee % (1-99, default: 5)');
+  console.log('    MEV_BLOCK_DELAY      MEV delay (0-50, default: 8)');
   console.log('');
   console.log(`  ${chalk.gray('Social Links:')}`);
   console.log('    TOKEN_WEBSITE        Website URL');
@@ -1461,114 +1890,196 @@ function showHelp(): void {
 async function showSettings(): Promise<void> {
   const env = getEnvConfig();
 
-  console.log('');
-  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
-  console.log(chalk.white.bold('  CURRENT SETTINGS'));
-  console.log(chalk.white.bold('  ═══════════════════════════════════════'));
-  console.log('');
+  let running = true;
+  while (running) {
+    console.log('');
+    console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+    console.log(chalk.white.bold('  CURRENT SETTINGS'));
+    console.log(chalk.white.bold('  ═══════════════════════════════════════'));
+    console.log('');
 
-  const hasKey = !!env.privateKey;
-  const hasAdmin = !!env.tokenAdmin;
-  const hasRecipient = !!env.rewardRecipient;
+    const hasKey = !!env.privateKey;
+    const hasAdmin = !!env.tokenAdmin;
+    const hasRecipient = !!env.rewardRecipient;
 
-  // Wallet
-  console.log(chalk.cyan('  WALLET'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(
-    `  ${chalk.gray('PRIVATE_KEY:')}       ${hasKey ? chalk.green('Set') : chalk.red('Not set')}`
-  );
-  console.log(`  ${chalk.gray('CHAIN_ID:')}          ${env.chainId}`);
-  console.log('');
+    // UX
+    console.log(chalk.cyan('  UX'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    const modeLabel =
+      sessionUxMode === 'normal'
+        ? chalk.white('Normal')
+        : sessionUxMode === 'fast'
+          ? chalk.yellow('Fast')
+          : chalk.red('Ultra');
+    console.log(`  ${chalk.gray('UX Mode:')}           ${modeLabel}`);
+    console.log(`  ${chalk.gray('Config file:')}       ${chalk.gray(CLI_CONFIG_PATH)}`);
+    if (ENV_FAST_MODE || ENV_AUTO_CONFIRM_TRANSACTIONS) {
+      console.log(
+        chalk.yellow('  [!] UX mode overridden by .env (FAST_MODE/AUTO_CONFIRM_TRANSACTIONS)')
+      );
+    }
+    console.log('');
 
-  // Token Defaults
-  console.log(chalk.cyan('  TOKEN DEFAULTS'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('TOKEN_NAME:')}        ${env.tokenName || chalk.gray('(not set)')}`);
-  console.log(
-    `  ${chalk.gray('TOKEN_SYMBOL:')}      ${env.tokenSymbol || chalk.gray('(not set)')}`
-  );
-  console.log(
-    `  ${chalk.gray('TOKEN_IMAGE:')}       ${env.tokenImage ? chalk.green('Set') : chalk.gray('(not set)')}`
-  );
-  console.log('');
+    // Wallet
+    console.log(chalk.cyan('  WALLET'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(
+      `  ${chalk.gray('PRIVATE_KEY:')}       ${hasKey ? chalk.green('Set') : chalk.red('Not set')}`
+    );
+    console.log(`  ${chalk.gray('CHAIN_ID:')}          ${env.chainId}`);
+    console.log('');
 
-  // Admin & Rewards
-  console.log(chalk.cyan('  ADMIN & REWARDS'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(
-    `  ${chalk.gray('TOKEN_ADMIN:')}       ${hasAdmin ? chalk.green(`${env.tokenAdmin.slice(0, 10)}...`) : chalk.gray('(deployer)')}`
-  );
-  console.log(
-    `  ${chalk.gray('REWARD_RECIPIENT:')}  ${hasRecipient ? chalk.green(`${env.rewardRecipient.slice(0, 10)}...`) : chalk.gray('(admin)')}`
-  );
-  console.log(`  ${chalk.gray('REWARD_TOKEN:')}      ${env.rewardToken}`);
-  console.log('');
+    // Token Defaults
+    console.log(chalk.cyan('  TOKEN DEFAULTS'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(
+      `  ${chalk.gray('TOKEN_NAME:')}        ${env.tokenName || chalk.gray('(not set)')}`
+    );
+    console.log(
+      `  ${chalk.gray('TOKEN_SYMBOL:')}      ${env.tokenSymbol || chalk.gray('(not set)')}`
+    );
+    console.log(
+      `  ${chalk.gray('TOKEN_IMAGE:')}       ${env.tokenImage ? chalk.green('Set') : chalk.gray('(not set)')}`
+    );
+    console.log('');
 
-  // Fees & MEV
-  console.log(chalk.cyan('  FEES & MEV'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('FEE_TYPE:')}          ${env.feeType}`);
-  console.log(`  ${chalk.gray('CLANKER_FEE:')}       ${env.clankerFee}%`);
-  console.log(`  ${chalk.gray('PAIRED_FEE:')}        ${env.pairedFee}%`);
-  console.log(`  ${chalk.gray('MEV_BLOCK_DELAY:')}   ${env.mevBlockDelay} blocks`);
-  console.log('');
+    // Admin & Rewards
+    console.log(chalk.cyan('  ADMIN & REWARDS'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(
+      `  ${chalk.gray('TOKEN_ADMIN:')}       ${hasAdmin ? chalk.green(`${env.tokenAdmin.slice(0, 10)}...`) : chalk.gray('(deployer)')}`
+    );
+    console.log(
+      `  ${chalk.gray('REWARD_RECIPIENT:')}  ${hasRecipient ? chalk.green(`${env.rewardRecipient.slice(0, 10)}...`) : chalk.gray('(admin)')}`
+    );
+    console.log(`  ${chalk.gray('REWARD_TOKEN:')}      ${env.rewardToken}`);
+    console.log('');
 
-  // Batch Deploy
-  console.log(chalk.cyan('  BATCH DEPLOY'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('BATCH_COUNT:')}       ${env.batchCount}`);
-  console.log(`  ${chalk.gray('BATCH_DELAY:')}       ${env.batchDelay}s`);
-  console.log(`  ${chalk.gray('BATCH_RETRIES:')}     ${env.batchRetries}`);
-  console.log('');
+    // Fees & MEV
+    console.log(chalk.cyan('  FEES & MEV'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(`  ${chalk.gray('FEE_TYPE:')}          ${env.feeType}`);
+    console.log(`  ${chalk.gray('FEE_PERCENTAGE:')}    ${env.feePercentage}% (both Token & WETH)`);
+    console.log(`  ${chalk.gray('MEV_BLOCK_DELAY:')}   ${env.mevBlockDelay} blocks`);
+    console.log('');
 
-  // Vault
-  console.log(chalk.cyan('  VAULT'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(
-    `  ${chalk.gray('VAULT_ENABLED:')}     ${env.vaultEnabled ? chalk.green('Yes') : 'No'}`
-  );
-  if (env.vaultEnabled) {
-    console.log(`  ${chalk.gray('VAULT_PERCENTAGE:')}  ${env.vaultPercentage}%`);
-    console.log(`  ${chalk.gray('VAULT_LOCKUP:')}      ${env.vaultLockupDays} days`);
-    console.log(`  ${chalk.gray('VAULT_VESTING:')}     ${env.vaultVestingDays} days`);
+    // Batch Deploy
+    console.log(chalk.cyan('  BATCH DEPLOY'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(`  ${chalk.gray('BATCH_COUNT:')}       ${env.batchCount}`);
+    console.log(`  ${chalk.gray('BATCH_DELAY:')}       ${env.batchDelay}s`);
+    console.log(`  ${chalk.gray('BATCH_RETRIES:')}     ${env.batchRetries}`);
+    console.log('');
+
+    // Vault
+    console.log(chalk.cyan('  VAULT'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(
+      `  ${chalk.gray('VAULT_ENABLED:')}     ${env.vaultEnabled ? chalk.green('Yes') : 'No'}`
+    );
+    if (env.vaultEnabled) {
+      console.log(`  ${chalk.gray('VAULT_PERCENTAGE:')}  ${env.vaultPercentage}%`);
+      console.log(`  ${chalk.gray('VAULT_LOCKUP:')}      ${env.vaultLockupDays} days`);
+      console.log(`  ${chalk.gray('VAULT_VESTING:')}     ${env.vaultVestingDays} days`);
+    }
+    console.log('');
+
+    // Social Links
+    console.log(chalk.cyan('  SOCIAL LINKS'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(
+      `  ${chalk.gray('Website:')}           ${env.tokenWebsite || chalk.gray('(not set)')}`
+    );
+    console.log(
+      `  ${chalk.gray('Twitter:')}           ${env.tokenTwitter || chalk.gray('(not set)')}`
+    );
+    console.log(
+      `  ${chalk.gray('Telegram:')}          ${env.tokenTelegram || chalk.gray('(not set)')}`
+    );
+    console.log(
+      `  ${chalk.gray('Discord:')}           ${env.tokenDiscord || chalk.gray('(not set)')}`
+    );
+    console.log(
+      `  ${chalk.gray('Farcaster:')}         ${env.tokenFarcaster || chalk.gray('(not set)')}`
+    );
+    console.log('');
+
+    // System info
+    console.log(chalk.cyan('  SYSTEM'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(
+      `  ${chalk.gray('Platform:')}          ${PLATFORM_INFO.os}${PLATFORM_INFO.isTermux ? ' (Termux)' : ''}`
+    );
+    console.log(`  ${chalk.gray('Node:')}              ${process.version}`);
+    console.log(
+      `  ${chalk.gray('Terminal:')}          ${PLATFORM_INFO.isTTY ? 'Interactive' : 'Non-interactive'}`
+    );
+    console.log('');
+    console.log(chalk.gray('  Edit .env file to change on-chain defaults (keys, fees, etc.)'));
+    console.log('');
+
+    const action = await select({
+      message: 'Settings:',
+      choices: [
+        { name: 'Change UX mode (Normal/Fast/Ultra)', value: 'ux' },
+        { name: chalk.gray('---'), value: 'separator', disabled: true },
+        { name: 'Back', value: 'back' },
+      ],
+    });
+
+    if (action === 'back') {
+      running = false;
+      break;
+    }
+
+    if (action === 'ux') {
+      const mode = await select({
+        message: 'UX mode:',
+        choices: [
+          { name: 'Normal (confirm optional prompts)', value: 'normal' },
+          { name: 'Fast (skip optional confirmations)', value: 'fast' },
+          { name: 'Ultra (auto-confirm transactions) [danger]', value: 'ultra' },
+        ],
+        default: sessionUxMode,
+      });
+
+      if (mode === 'ultra') {
+        console.log('');
+        console.log(chalk.red('  WARNING: Ultra mode will auto-confirm transactions.'));
+        console.log(chalk.red('  This can spend gas immediately without asking.'));
+        console.log('');
+
+        const ok = await confirm({
+          message: 'Enable Ultra mode?',
+          default: false,
+        });
+        if (!ok) {
+          console.log(chalk.yellow('\n  Cancelled.\n'));
+          await input({ message: 'Press Enter...' });
+          continue;
+        }
+
+        const guard = await input({
+          message: "Type 'ULTRA' to confirm:",
+        });
+        if (guard.trim() !== 'ULTRA') {
+          console.log(chalk.yellow('\n  Cancelled.\n'));
+          await input({ message: 'Press Enter...' });
+          continue;
+        }
+      }
+
+      sessionUxMode = mode as UxMode;
+      try {
+        writeCliConfig({ uxMode: sessionUxMode });
+        console.log(chalk.green(`\n  ✓ Saved UX mode: ${sessionUxMode}`));
+      } catch {
+        console.log(chalk.red('\n  ✗ Failed to save config file.'));
+      }
+
+      await input({ message: 'Press Enter...' });
+    }
   }
-  console.log('');
-
-  // Social Links
-  console.log(chalk.cyan('  SOCIAL LINKS'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(
-    `  ${chalk.gray('Website:')}           ${env.tokenWebsite || chalk.gray('(not set)')}`
-  );
-  console.log(
-    `  ${chalk.gray('Twitter:')}           ${env.tokenTwitter || chalk.gray('(not set)')}`
-  );
-  console.log(
-    `  ${chalk.gray('Telegram:')}          ${env.tokenTelegram || chalk.gray('(not set)')}`
-  );
-  console.log(
-    `  ${chalk.gray('Discord:')}           ${env.tokenDiscord || chalk.gray('(not set)')}`
-  );
-  console.log(
-    `  ${chalk.gray('Farcaster:')}         ${env.tokenFarcaster || chalk.gray('(not set)')}`
-  );
-  console.log('');
-
-  // System info
-  console.log(chalk.cyan('  SYSTEM'));
-  console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(
-    `  ${chalk.gray('Platform:')}          ${PLATFORM_INFO.os}${PLATFORM_INFO.isTermux ? ' (Termux)' : ''}`
-  );
-  console.log(`  ${chalk.gray('Node:')}              ${process.version}`);
-  console.log(
-    `  ${chalk.gray('Terminal:')}          ${PLATFORM_INFO.isTTY ? 'Interactive' : 'Non-interactive'}`
-  );
-  console.log('');
-  console.log(chalk.gray('  Edit .env file to change settings'));
-  console.log('');
-
-  await input({ message: 'Press Enter...' });
 }
 
 // ============================================================================
@@ -1899,116 +2410,87 @@ function saveDeployedToken(token: DeployedToken): void {
 }
 
 async function showWalletInfo(): Promise<void> {
-  let walletRunning = true;
+  const env = getEnvConfig();
 
-  while (walletRunning) {
-    const env = getEnvConfig();
-    const currentWallet = getCurrentWallet();
+  console.log('');
+  console.log(chalk.white.bold('  WALLET INFO'));
+  console.log(chalk.gray('  ─────────────────────────────────────'));
+
+  if (!env.privateKey) {
+    console.log('');
+    console.log(chalk.yellow('  ⚠ No wallet configured'));
+    console.log(chalk.gray('  Add PRIVATE_KEY=0x... to your .env file'));
+    console.log('');
+    await input({ message: 'Press Enter to continue...' });
+    return;
+  }
+
+  try {
+    const chainId = env.chainId;
+    const chainInfo = CHAIN_INFO[chainId] || CHAIN_INFO[8453];
+    const account = privateKeyToAccount(env.privateKey as `0x${string}`);
+    const address = account.address;
 
     console.log('');
-    console.log(chalk.white.bold('  WALLET INFO'));
-    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(`  ${chalk.gray('Address:')}  ${chalk.cyan(address)}`);
+    console.log(`  ${chalk.gray('Chain:')}    ${chalk.yellow(chainInfo.name)} (${chainId})`);
+    console.log('');
+    console.log(chalk.gray('  Loading balance...'));
 
-    if (!currentWallet) {
-      console.log('');
-      console.log(chalk.yellow('  ⚠ No wallet configured'));
-      console.log('');
-
-      const action = await select({
-        message: 'Select an option:',
-        choices: [
-          { name: `${chalk.green('[1]')} Wallet Management`, value: 'manage' },
-          { name: `${chalk.yellow('[<]')} Back to Main Menu`, value: 'back' },
-        ],
-      });
-
-      if (action === 'manage') {
-        await handleWalletManagement();
-      } else {
-        walletRunning = false;
-      }
-      continue;
-    }
+    // Fetch balance
+    let balance = 0n;
+    let tokenPrice = 0;
 
     try {
-      const chainId = env.chainId;
-      const chainInfo = CHAIN_INFO[chainId] || CHAIN_INFO[8453];
-      const address = currentWallet.address;
-
-      console.log('');
-      console.log(`  ${chalk.gray('Address:')}  ${chalk.cyan(address)}`);
-      console.log(`  ${chalk.gray('Chain:')}    ${chalk.yellow(chainInfo.name)} (${chainId})`);
-      console.log('');
-      console.log(chalk.gray('  Loading balance...'));
-
-      // Fetch balance
-      let balance = 0n;
-      let tokenPrice = 0;
-
-      try {
-        [tokenPrice, balance] = await Promise.all([
-          fetchTokenPrice(chainInfo.coingeckoId),
-          getNativeBalance(address as `0x${string}`, chainId),
-        ]);
-      } catch {
-        process.stdout.write('\x1B[1A\x1B[2K');
-        console.log(chalk.yellow('  ⚠ Could not fetch balance'));
-      }
-
+      [tokenPrice, balance] = await Promise.all([
+        fetchTokenPrice(chainInfo.coingeckoId),
+        getNativeBalance(address as `0x${string}`, chainId),
+      ]);
+    } catch {
       process.stdout.write('\x1B[1A\x1B[2K');
-
-      // Format balance
-      const nativeAmount = Number(balance) / 1e18;
-      const usdAmount = nativeAmount * tokenPrice;
-      const gasPerDeploy = DEPLOY_GAS_ESTIMATES[chainId] || 0.001;
-      const estimatedDeploys = gasPerDeploy > 0 ? Math.floor(nativeAmount / gasPerDeploy) : 0;
-
-      // Display balance
-      console.log(chalk.cyan(`  ${chainInfo.name.toUpperCase()} BALANCE`));
-      console.log(chalk.gray('  ─────────────────────────────────────'));
-      console.log(
-        `  ${chalk.white(nativeAmount.toFixed(6))} ${chainInfo.symbol}  ${chalk.gray('≈')} ${chalk.green(`$${usdAmount.toFixed(2)}`)}`
-      );
-      console.log('');
-
-      let deployColor = chalk.green;
-      if (estimatedDeploys === 0) deployColor = chalk.red;
-      else if (estimatedDeploys < 5) deployColor = chalk.yellow;
-
-      console.log(
-        `  ${chalk.gray('Est. Deploys:')} ${deployColor(String(estimatedDeploys))} ${chalk.gray(`(~${gasPerDeploy} ${chainInfo.symbol} each)`)}`
-      );
-      console.log('');
-
-      console.log(chalk.gray(`  View on ${chainInfo.name} Explorer:`));
-      console.log(chalk.blue(`  ${chainInfo.explorer}/address/${address}`));
-      console.log('');
-
-      // Show menu
-      const action = await select({
-        message: 'Select an option:',
-        choices: [
-          { name: `${chalk.green('[1]')} Wallet Management`, value: 'manage' },
-          { name: `${chalk.yellow('[<]')} Back to Main Menu`, value: 'back' },
-        ],
-      });
-
-      if (action === 'manage') {
-        await handleWalletManagement();
-      } else {
-        walletRunning = false;
-      }
-    } catch (err) {
-      console.log('');
-      console.log(
-        chalk.red(`  Error: ${err instanceof Error ? err.message : 'Failed to load wallet info'}`)
-      );
-      console.log('');
-      await input({ message: 'Press Enter...' });
-      walletRunning = false;
+      console.log(chalk.yellow('  ⚠ Could not fetch balance'));
     }
+
+    process.stdout.write('\x1B[1A\x1B[2K');
+
+    // Format balance
+    const nativeAmount = Number(balance) / 1e18;
+    const usdAmount = nativeAmount * tokenPrice;
+    const gasPerDeploy = DEPLOY_GAS_ESTIMATES[chainId] || 0.001;
+    const estimatedDeploys = gasPerDeploy > 0 ? Math.floor(nativeAmount / gasPerDeploy) : 0;
+
+    // Display balance
+    console.log(chalk.cyan(`  ${chainInfo.name.toUpperCase()} BALANCE`));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(
+      `  ${chalk.white(nativeAmount.toFixed(6))} ${chainInfo.symbol}  ${chalk.gray('≈')} ${chalk.green(`$${usdAmount.toFixed(2)}`)}`
+    );
+    console.log('');
+
+    let deployColor = chalk.green;
+    if (estimatedDeploys === 0) deployColor = chalk.red;
+    else if (estimatedDeploys < 5) deployColor = chalk.yellow;
+
+    console.log(
+      `  ${chalk.gray('Est. Deploys:')} ${deployColor(String(estimatedDeploys))} ${chalk.gray(`(~${gasPerDeploy} ${chainInfo.symbol} each)`)}`
+    );
+    console.log('');
+
+    console.log(chalk.gray(`  View on ${chainInfo.name} Explorer:`));
+    console.log(chalk.blue(`  ${chainInfo.explorer}/address/${address}`));
+    console.log('');
+
+    await input({ message: 'Press Enter to continue...' });
+  } catch (err) {
+    console.log('');
+    console.log(
+      chalk.red(`  Error: ${err instanceof Error ? err.message : 'Failed to load wallet info'}`)
+    );
+    console.log('');
+    await input({ message: 'Press Enter to continue...' });
   }
 }
+
 
 // ============================================================================
 // Manage Token Handlers
@@ -2036,8 +2518,10 @@ async function handleManageAction(action: string): Promise<void> {
 
   // Create deployer for transactions
   const deployer = new Deployer({
-    privateKey: env.privateKey as `0x${string}`,
-    chainId,
+    config: {
+      privateKey: env.privateKey as `0x${string}`,
+      chainId,
+    }
   });
 
   console.log('');
@@ -2059,19 +2543,22 @@ async function handleManageAction(action: string): Promise<void> {
       console.log(`  ${chalk.gray('New Image:')} ${newImage}`);
       console.log('');
 
-      const confirmUpdate = await confirm({
-        message: 'Proceed with update?',
-        default: false,
-      });
+      const confirmUpdate = await maybeConfirm(
+        {
+          message: 'Proceed with update?',
+          default: false,
+        },
+        'transaction'
+      );
 
       if (confirmUpdate) {
         try {
-          const result = await deployer.updateImage(tokenAddress, newImage);
-          if (result.txHash) {
+          const txHash = await deployer.updateImage(tokenAddress, newImage);
+          if (txHash) {
             console.log(chalk.green(`\n  [OK] Image updated!`));
-            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${result.txHash}\n`));
+            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${txHash}\n`));
           } else {
-            console.log(chalk.red(`\n  [FAIL] ${result.error?.message || 'Unknown error'}\n`));
+            console.log(chalk.red(`\n  [FAIL] No transaction hash returned\n`));
           }
         } catch (err) {
           console.log(
@@ -2112,19 +2599,22 @@ async function handleManageAction(action: string): Promise<void> {
       console.log(`  ${chalk.gray('Metadata:')} ${newMetadata.slice(0, 50)}...`);
       console.log('');
 
-      const confirmMeta = await confirm({
-        message: 'Proceed with update?',
-        default: false,
-      });
+      const confirmMeta = await maybeConfirm(
+        {
+          message: 'Proceed with update?',
+          default: false,
+        },
+        'transaction'
+      );
 
       if (confirmMeta) {
         try {
-          const result = await deployer.updateMetadata(tokenAddress, newMetadata);
-          if (result.txHash) {
+          const txHash = await deployer.updateMetadata(tokenAddress, newMetadata);
+          if (txHash) {
             console.log(chalk.green(`\n  [OK] Metadata updated!`));
-            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${result.txHash}\n`));
+            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${txHash}\n`));
           } else {
-            console.log(chalk.red(`\n  [FAIL] ${result.error?.message || 'Unknown error'}\n`));
+            console.log(chalk.red(`\n  [FAIL] No transaction hash returned\n`));
           }
         } catch (err) {
           console.log(
@@ -2144,7 +2634,7 @@ async function handleManageAction(action: string): Promise<void> {
       try {
         const rewards = await deployer.getRewards(tokenAddress);
 
-        if (rewards.length === 0) {
+        if (rewards.recipients.length === 0) {
           console.log(chalk.yellow('\n  [!] No rewards configured for this token\n'));
           break;
         }
@@ -2154,8 +2644,8 @@ async function handleManageAction(action: string): Promise<void> {
         console.log(chalk.white.bold('  CURRENT REWARDS'));
         console.log(chalk.gray('  ─────────────────────────────────────'));
 
-        const rewardChoices = rewards.map((r, i) => {
-          const tokenType = r.token === 0 ? 'Both' : r.token === 1 ? 'Paired' : 'Clanker';
+        const rewardChoices = rewards.recipients.map((r, i) => {
+          const tokenType = r.feePreference;
           const bpsPercent = (r.bps / 100).toFixed(2);
           return {
             name: `[${i}] ${r.recipient.slice(0, 10)}...${r.recipient.slice(-8)} (${bpsPercent}% ${tokenType})`,
@@ -2168,7 +2658,7 @@ async function handleManageAction(action: string): Promise<void> {
           choices: rewardChoices,
         });
 
-        const currentReward = rewards[selectedIndex];
+        const currentReward = rewards.recipients[selectedIndex];
         console.log('');
         console.log(chalk.gray(`  Current recipient: ${currentReward.recipient}`));
         console.log(chalk.gray(`  Current admin:     ${currentReward.admin}`));
@@ -2190,22 +2680,25 @@ async function handleManageAction(action: string): Promise<void> {
         console.log(`  ${chalk.gray('New Recipient:')} ${newRecipient}`);
         console.log('');
 
-        const confirmRecipient = await confirm({
-          message: 'Proceed with update?',
-          default: false,
-        });
+        const confirmRecipient = await maybeConfirm(
+          {
+            message: 'Proceed with update?',
+            default: false,
+          },
+          'transaction'
+        );
 
         if (confirmRecipient) {
-          const result = await deployer.updateRewardRecipient({
+          const txHash = await deployer.updateRewardRecipient({
             token: tokenAddress,
             rewardIndex: BigInt(selectedIndex),
             newRecipient: newRecipient.trim() as `0x${string}`,
           });
-          if (result.txHash) {
+          if (txHash) {
             console.log(chalk.green(`\n  [OK] Recipient updated!`));
-            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${result.txHash}\n`));
+            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${txHash}\n`));
           } else {
-            console.log(chalk.red(`\n  [FAIL] ${result.error?.message || 'Unknown error'}\n`));
+            console.log(chalk.red(`\n  [FAIL] No transaction hash returned\n`));
           }
         } else {
           console.log(chalk.yellow('\n  [!] Cancelled\n'));
@@ -2225,7 +2718,7 @@ async function handleManageAction(action: string): Promise<void> {
       try {
         const rewards = await deployer.getRewards(tokenAddress);
 
-        if (rewards.length === 0) {
+        if (rewards.recipients.length === 0) {
           console.log(chalk.yellow('\n  [!] No rewards configured for this token\n'));
           break;
         }
@@ -2235,8 +2728,8 @@ async function handleManageAction(action: string): Promise<void> {
         console.log(chalk.white.bold('  CURRENT REWARDS'));
         console.log(chalk.gray('  ─────────────────────────────────────'));
 
-        const rewardChoices = rewards.map((r, i) => {
-          const tokenType = r.token === 0 ? 'Both' : r.token === 1 ? 'Paired' : 'Clanker';
+        const rewardChoices = rewards.recipients.map((r, i) => {
+          const tokenType = r.feePreference;
           const bpsPercent = (r.bps / 100).toFixed(2);
           return {
             name: `[${i}] Admin: ${r.admin.slice(0, 10)}...${r.admin.slice(-8)} (${bpsPercent}% ${tokenType})`,
@@ -2249,7 +2742,7 @@ async function handleManageAction(action: string): Promise<void> {
           choices: rewardChoices,
         });
 
-        const currentReward = rewards[selectedIndex];
+        const currentReward = rewards.recipients[selectedIndex];
         console.log('');
         console.log(chalk.gray(`  Current admin:     ${currentReward.admin}`));
         console.log(chalk.gray(`  Current recipient: ${currentReward.recipient}`));
@@ -2271,22 +2764,25 @@ async function handleManageAction(action: string): Promise<void> {
         console.log(`  ${chalk.gray('New Admin:')}    ${newAdmin}`);
         console.log('');
 
-        const confirmAdmin = await confirm({
-          message: 'Proceed with update?',
-          default: false,
-        });
+        const confirmAdmin = await maybeConfirm(
+          {
+            message: 'Proceed with update?',
+            default: false,
+          },
+          'transaction'
+        );
 
         if (confirmAdmin) {
-          const result = await deployer.updateRewardAdmin({
+          const txHash = await deployer.updateRewardAdmin({
             token: tokenAddress,
             rewardIndex: BigInt(selectedIndex),
             newAdmin: newAdmin.trim() as `0x${string}`,
           });
-          if (result.txHash) {
+          if (txHash) {
             console.log(chalk.green(`\n  [OK] Admin updated!`));
-            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${result.txHash}\n`));
+            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${txHash}\n`));
           } else {
-            console.log(chalk.red(`\n  [FAIL] ${result.error?.message || 'Unknown error'}\n`));
+            console.log(chalk.red(`\n  [FAIL] No transaction hash returned\n`));
           }
         } else {
           console.log(chalk.yellow('\n  [!] Cancelled\n'));
@@ -2340,8 +2836,10 @@ async function handleClaimAction(action: string): Promise<void> {
 
   // Create deployer
   const deployer = new Deployer({
-    privateKey: env.privateKey as `0x${string}`,
-    chainId,
+    config: {
+      privateKey: env.privateKey as `0x${string}`,
+      chainId,
+    }
   });
 
   console.log('');
@@ -2370,18 +2868,21 @@ async function handleClaimAction(action: string): Promise<void> {
         );
         console.log('');
 
-        const confirmClaim = await confirm({
-          message: 'Claim fees now?',
-          default: false,
-        });
+        const confirmClaim = await maybeConfirm(
+          {
+            message: 'Claim fees now?',
+            default: false,
+          },
+          'transaction'
+        );
 
         if (confirmClaim) {
-          const result = await deployer.claimFees(tokenAddress, deployer.address);
-          if (result.txHash) {
+          const txHash = await deployer.claimFees(tokenAddress, deployer.address);
+          if (txHash) {
             console.log(chalk.green(`\n  [OK] Fees claimed!`));
-            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${result.txHash}\n`));
+            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${txHash}\n`));
           } else {
-            console.log(chalk.red(`\n  [FAIL] ${result.error?.message || 'Unknown error'}\n`));
+            console.log(chalk.red(`\n  [FAIL] No transaction hash returned\n`));
           }
         } else {
           console.log(chalk.yellow('\n  [!] Cancelled\n'));
@@ -2418,18 +2919,21 @@ async function handleClaimAction(action: string): Promise<void> {
         );
         console.log('');
 
-        const confirmVault = await confirm({
-          message: 'Claim vaulted tokens now?',
-          default: false,
-        });
+        const confirmVault = await maybeConfirm(
+          {
+            message: 'Claim vaulted tokens now?',
+            default: false,
+          },
+          'transaction'
+        );
 
         if (confirmVault) {
-          const result = await deployer.claimVaultedTokens(tokenAddress);
-          if (result.txHash) {
+          const txHash = await deployer.claimVaultedTokens(tokenAddress);
+          if (txHash) {
             console.log(chalk.green(`\n  [OK] Vaulted tokens claimed!`));
-            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${result.txHash}\n`));
+            console.log(chalk.gray(`  Tx: ${getExplorerUrl(chainId)}/tx/${txHash}\n`));
           } else {
-            console.log(chalk.red(`\n  [FAIL] ${result.error?.message || 'Unknown error'}\n`));
+            console.log(chalk.red(`\n  [FAIL] No transaction hash returned\n`));
           }
         } else {
           console.log(chalk.yellow('\n  [!] Cancelled\n'));
@@ -2458,7 +2962,9 @@ async function handleClaimAction(action: string): Promise<void> {
         console.log('');
         console.log(chalk.white.bold('  REWARDS SUMMARY'));
         console.log(chalk.gray('  ─────────────────────────────────────'));
-        console.log(`  ${chalk.gray('Token:')}          ${tokenAddress.slice(0, 10)}...${tokenAddress.slice(-8)}`);
+        console.log(
+          `  ${chalk.gray('Token:')}          ${tokenAddress.slice(0, 10)}...${tokenAddress.slice(-8)}`
+        );
         console.log(`  ${chalk.gray('Chain:')}          ${getChainName(chainId)}`);
         console.log(`  ${chalk.gray('Wallet:')}         ${deployer.address.slice(0, 10)}...`);
         console.log('');
@@ -2474,24 +2980,30 @@ async function handleClaimAction(action: string): Promise<void> {
         console.log('');
 
         // Show reward configuration
-        if (rewards.length > 0) {
+        if (rewards.recipients.length > 0) {
           console.log(chalk.cyan('  REWARD CONFIGURATION'));
           console.log(chalk.gray('  ─────────────────────────────────────'));
 
-          for (let i = 0; i < rewards.length; i++) {
-            const r = rewards[i];
-            const tokenType = r.token === 0 ? 'Both' : r.token === 1 ? 'Paired' : 'Clanker';
+          for (let i = 0; i < rewards.recipients.length; i++) {
+            const r = rewards.recipients[i];
+            const tokenType = r.feePreference;
             const bpsPercent = (r.bps / 100).toFixed(2);
             console.log(
               `  ${chalk.gray(`[${i}]`)} ${chalk.white(`${bpsPercent}%`)} ${chalk.gray(tokenType)}`
             );
-            console.log(`      ${chalk.gray('Recipient:')} ${r.recipient.slice(0, 10)}...${r.recipient.slice(-8)}`);
-            console.log(`      ${chalk.gray('Admin:')}     ${r.admin.slice(0, 10)}...${r.admin.slice(-8)}`);
+            console.log(
+              `      ${chalk.gray('Recipient:')} ${r.recipient.slice(0, 10)}...${r.recipient.slice(-8)}`
+            );
+            console.log(
+              `      ${chalk.gray('Admin:')}     ${r.admin.slice(0, 10)}...${r.admin.slice(-8)}`
+            );
           }
           console.log('');
         } else {
           console.log(chalk.yellow('  No reward configuration found for this token.'));
-          console.log(chalk.gray('  This may be a non-Clanker token or rewards not yet configured.'));
+          console.log(
+            chalk.gray('  This may be a non-Clanker token or rewards not yet configured.')
+          );
           console.log('');
         }
 
@@ -2500,10 +3012,14 @@ async function handleClaimAction(action: string): Promise<void> {
           console.log(chalk.cyan('  ACTIONS'));
           console.log(chalk.gray('  ─────────────────────────────────────'));
           if (fees > 0n) {
-            console.log(`  ${chalk.green('→')} Use "Claim Trading Fees" to claim ${feesEth.toFixed(6)} ETH`);
+            console.log(
+              `  ${chalk.green('→')} Use "Claim Trading Fees" to claim ${feesEth.toFixed(6)} ETH`
+            );
           }
           if (vaultAmount > 0n) {
-            console.log(`  ${chalk.green('→')} Use "Claim Vaulted Tokens" to claim ${vaultTokens.toLocaleString()} tokens`);
+            console.log(
+              `  ${chalk.green('→')} Use "Claim Vaulted Tokens" to claim ${vaultTokens.toLocaleString()} tokens`
+            );
           }
           console.log('');
         }
@@ -2561,9 +3077,7 @@ async function handleBatchClaim(): Promise<void> {
 
     try {
       if (fs.existsSync(resultsDir)) {
-        resultFiles = fs
-          .readdirSync(resultsDir)
-          .filter((f) => f.endsWith('.json'));
+        resultFiles = fs.readdirSync(resultsDir).filter((f) => f.endsWith('.json'));
       }
     } catch {
       // Ignore
@@ -2605,7 +3119,11 @@ async function handleBatchClaim(): Promise<void> {
 
       console.log(chalk.green(`\n  ✓ Loaded ${tokenAddresses.length} token addresses\n`));
     } catch (err) {
-      console.log(chalk.red(`\n  Failed to load file: ${err instanceof Error ? err.message : 'Unknown error'}\n`));
+      console.log(
+        chalk.red(
+          `\n  Failed to load file: ${err instanceof Error ? err.message : 'Unknown error'}\n`
+        )
+      );
       await input({ message: 'Press Enter...' });
       return;
     }
@@ -2647,8 +3165,10 @@ async function handleBatchClaim(): Promise<void> {
 
   // Create deployer
   const deployer = new Deployer({
-    privateKey: env.privateKey as `0x${string}`,
-    chainId,
+    config: {
+      privateKey: env.privateKey as `0x${string}`,
+      chainId,
+    }
   });
 
   // Check available fees for all tokens
@@ -2712,10 +3232,13 @@ async function handleBatchClaim(): Promise<void> {
   console.log('');
 
   // Confirm
-  const confirmClaim = await confirm({
-    message: `Claim fees from ${tokensWithFees.length} tokens?`,
-    default: false,
-  });
+  const confirmClaim = await maybeConfirm(
+    {
+      message: `Claim fees from ${tokensWithFees.length} tokens?`,
+      default: false,
+    },
+    'transaction'
+  );
 
   if (!confirmClaim) {
     console.log(chalk.yellow('\n  Cancelled.\n'));
@@ -2737,14 +3260,14 @@ async function handleBatchClaim(): Promise<void> {
     process.stdout.write(`  [${i + 1}/${tokensWithFees.length}] ${t.address.slice(0, 10)}...`);
 
     try {
-      const result = await deployer.claimFees(t.address as `0x${string}`, deployer.address);
+      const txHash = await deployer.claimFees(t.address as `0x${string}`, deployer.address);
 
-      if (result.txHash) {
+      if (txHash) {
         console.log(chalk.green(` ✓ ${t.feesEth.toFixed(6)} ETH`));
         successCount++;
         claimedTotal += t.fees;
       } else {
-        console.log(chalk.red(` ✗ ${result.error?.message || 'Failed'}`));
+        console.log(chalk.red(` ✗ No transaction hash returned`));
         failCount++;
       }
     } catch (err) {
@@ -2766,7 +3289,9 @@ async function handleBatchClaim(): Promise<void> {
   console.log('');
   console.log(`  ${chalk.gray('Success:')}  ${chalk.green(successCount)}`);
   console.log(`  ${chalk.gray('Failed:')}   ${chalk.red(failCount)}`);
-  console.log(`  ${chalk.gray('Claimed:')}  ${chalk.green(`${(Number(claimedTotal) / 1e18).toFixed(6)} ETH`)}`);
+  console.log(
+    `  ${chalk.gray('Claimed:')}  ${chalk.green(`${(Number(claimedTotal) / 1e18).toFixed(6)} ETH`)}`
+  );
   console.log('');
 
   await input({ message: 'Press Enter...' });
@@ -2793,7 +3318,9 @@ async function handleScanDeployed(): Promise<void> {
   console.log(`  ${chalk.gray('Wallet:')} ${deployerAddress}`);
   console.log('');
   console.log(chalk.gray('  View on Defined.fi:'));
-  console.log(chalk.blue(`  https://www.defined.fi/tokens/discover?creatorAddress=${deployerAddress}`));
+  console.log(
+    chalk.blue(`  https://www.defined.fi/tokens/discover?creatorAddress=${deployerAddress}`)
+  );
   console.log('');
 
   // Select chain
@@ -2921,8 +3448,10 @@ async function handleScanDeployed(): Promise<void> {
 
   // Create deployer for fee checking
   const deployer = new Deployer({
-    privateKey: env.privateKey as `0x${string}`,
-    chainId,
+    config: {
+      privateKey: env.privateKey as `0x${string}`,
+      chainId,
+    }
   });
 
   // Check fees for all tokens
@@ -2980,7 +3509,9 @@ async function handleScanDeployed(): Promise<void> {
 
   console.log(`  ${chalk.gray('Total Tokens:')}  ${tokens.length}`);
   console.log(`  ${chalk.gray('Chain:')}         ${getChainName(chainId)}`);
-  console.log(`  ${chalk.gray('Total Fees:')}    ${totalFees > 0n ? chalk.green(`${totalFeesEth.toFixed(6)} ETH`) : chalk.yellow('0 ETH')}`);
+  console.log(
+    `  ${chalk.gray('Total Fees:')}    ${totalFees > 0n ? chalk.green(`${totalFeesEth.toFixed(6)} ETH`) : chalk.yellow('0 ETH')}`
+  );
   console.log('');
 
   // Show tokens with fees
@@ -2992,7 +3523,9 @@ async function handleScanDeployed(): Promise<void> {
 
     for (const t of claimable) {
       console.log(`  ${chalk.green('●')} ${t.name} (${t.symbol})`);
-      console.log(`    ${chalk.gray('Address:')} ${t.address.slice(0, 10)}...${t.address.slice(-8)}`);
+      console.log(
+        `    ${chalk.gray('Address:')} ${t.address.slice(0, 10)}...${t.address.slice(-8)}`
+      );
       console.log(`    ${chalk.gray('Fees:')}    ${chalk.green(`${t.feesEth.toFixed(6)} ETH`)}`);
     }
     console.log('');
@@ -3017,14 +3550,14 @@ async function handleScanDeployed(): Promise<void> {
         process.stdout.write(`  [${i + 1}/${claimable.length}] ${t.symbol}...`);
 
         try {
-          const result = await deployer.claimFees(t.address as `0x${string}`, deployer.address);
+          const txHash = await deployer.claimFees(t.address as `0x${string}`, deployer.address);
 
-          if (result.txHash) {
+          if (txHash) {
             console.log(chalk.green(` ✓ ${t.feesEth.toFixed(6)} ETH`));
             successCount++;
             claimedTotal += t.fees;
           } else {
-            console.log(chalk.red(` ✗ ${result.error?.message || 'Failed'}`));
+            console.log(chalk.red(` ✗ No transaction hash returned`));
             failCount++;
           }
         } catch (err) {
@@ -3043,7 +3576,9 @@ async function handleScanDeployed(): Promise<void> {
       console.log(chalk.gray('  ─────────────────────────────────────'));
       console.log(`  ${chalk.gray('Success:')}  ${chalk.green(successCount)}`);
       console.log(`  ${chalk.gray('Failed:')}   ${chalk.red(failCount)}`);
-      console.log(`  ${chalk.gray('Claimed:')}  ${chalk.green(`${(Number(claimedTotal) / 1e18).toFixed(6)} ETH`)}`);
+      console.log(
+        `  ${chalk.gray('Claimed:')}  ${chalk.green(`${(Number(claimedTotal) / 1e18).toFixed(6)} ETH`)}`
+      );
       console.log('');
     }
   } else {
@@ -3053,10 +3588,13 @@ async function handleScanDeployed(): Promise<void> {
   }
 
   // Show all tokens list
-  const showAll = await confirm({
-    message: 'Show all tokens list?',
-    default: false,
-  });
+  const showAll = await maybeConfirm(
+    {
+      message: 'Show all tokens list?',
+      default: false,
+    },
+    'optional'
+  );
 
   if (showAll) {
     console.log('');
@@ -3076,7 +3614,9 @@ async function handleScanDeployed(): Promise<void> {
   // Quick links
   console.log(chalk.cyan('  QUICK LINKS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
-  console.log(`  ${chalk.gray('Defined.fi:')} https://www.defined.fi/tokens/discover?creatorAddress=${deployerAddress}`);
+  console.log(
+    `  ${chalk.gray('Defined.fi:')} https://www.defined.fi/tokens/discover?creatorAddress=${deployerAddress}`
+  );
   console.log(`  ${chalk.gray('Basescan:')}   https://basescan.org/address/${deployerAddress}`);
   console.log('');
 
@@ -3159,17 +3699,17 @@ function parseArgs(): TokenInfo {
   }
 
   return {
-    name,
-    symbol,
-    image,
+    name: name.trim(),
+    symbol: symbol.trim().toUpperCase(),
+    image: normalizeImageUrl(image),
     chainId,
     privateKey: env.privateKey,
     description:
       description ||
-      `${name} ($${symbol}) - A token deployed on ${getChainName(chainId)} via Clanker`,
+      `${name.trim()} ($${symbol.trim().toUpperCase()}) - A token deployed on ${getChainName(chainId)} via Clanker`,
     // Social Links
     website: env.tokenWebsite,
-    farcaster: process.env.TOKEN_FARCASTER || '',
+    farcaster: env.tokenFarcaster || '',
     twitter: env.tokenTwitter,
     zora: process.env.TOKEN_ZORA || '',
     instagram: process.env.TOKEN_INSTAGRAM || '',
@@ -3178,8 +3718,7 @@ function parseArgs(): TokenInfo {
     rewardRecipient: env.rewardRecipient,
     rewardToken: env.rewardToken,
     feeType: env.feeType,
-    clankerFee: env.clankerFee,
-    pairedFee: env.pairedFee,
+    feePercentage: env.feePercentage,
     mevBlockDelay: env.mevBlockDelay,
     interfaceName: env.interfaceName,
     platformName: env.platformName,
@@ -3190,34 +3729,51 @@ function parseArgs(): TokenInfo {
 }
 
 async function cliDeploy(config: TokenInfo): Promise<void> {
-  if (!config.name || !config.symbol) {
-    console.log(chalk.red('\n  Error: --name and --symbol required\n'));
-    process.exit(1);
-  }
-  if (!config.privateKey?.startsWith('0x')) {
-    console.log(chalk.red('\n  Error: PRIVATE_KEY not set in .env\n'));
+  // Validate environment configuration at startup
+  const envConfig = getEnvConfig();
+  const validation = validateEnvConfig(envConfig);
+  
+  if (!validation.valid) {
+    console.log('');
+    console.log(chalk.red.bold('  ❌ CONFIGURATION ERROR'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log('');
+    
+    for (const error of validation.errors) {
+      console.log(chalk.red(`  • ${error}`));
+    }
+    
+    console.log('');
+    console.log(chalk.yellow('  Please fix the errors in your .env file and try again.'));
+    console.log('');
+    
     process.exit(1);
   }
 
-  await deployToken(config);
+  const prepared = prepareTokenInfo(config);
+  if (!prepared.ok) {
+    console.log(chalk.red(`\n  Error: ${prepared.error}\n`));
+    process.exit(1);
+  }
+
+  await deployToken(prepared.value);
 }
 
 // ============================================================================
-// Batch Deploy (Simple Template-Based)
+// Batch Farcaster Deploy (Focused)
 // ============================================================================
 
-async function showBatchDeployMenu(): Promise<void> {
+async function showBatchFarcasterMenu(): Promise<void> {
   console.log('');
-  console.log(chalk.green.bold('  BATCH DEPLOY'));
+  console.log(chalk.green.bold('  BATCH FARCASTER DEPLOY'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log('');
 
   const mode = await select({
     message: 'Select action:',
     choices: [
-      { name: `${chalk.cyan('[1]')} Generate New Template`, value: 'generate' },
-      { name: `${chalk.cyan('[2]')} Generate from Farcaster`, value: 'farcaster' },
-      { name: `${chalk.cyan('[3]')} Deploy from Template`, value: 'deploy' },
+      { name: `${chalk.cyan('[1]')} Generate from Farcaster`, value: 'generate' },
+      { name: `${chalk.cyan('[2]')} Deploy from Template`, value: 'deploy' },
       { name: chalk.gray('---'), value: 'separator', disabled: true },
       { name: `${chalk.yellow('[<]')} Back to Main Menu`, value: 'back' },
     ],
@@ -3226,8 +3782,6 @@ async function showBatchDeployMenu(): Promise<void> {
   if (mode === 'back') return;
 
   if (mode === 'generate') {
-    await generateBatchTemplate();
-  } else if (mode === 'farcaster') {
     await generateFarcasterTemplate();
   } else if (mode === 'deploy') {
     await deployBatchTemplate();
@@ -3303,11 +3857,7 @@ async function generateBatchTemplate(): Promise<void> {
   const symbol = await input({
     message: 'Token symbol:',
     default: env.tokenSymbol || 'MTK',
-    validate: (v) => {
-      if (!v.trim()) return 'Symbol is required';
-      if (v.length > 10) return 'Max 10 characters';
-      return true;
-    },
+    validate: validateTokenSymbolInput,
   });
 
   const imageInput = await input({
@@ -3411,10 +3961,13 @@ async function generateBatchTemplate(): Promise<void> {
     recipientInput.startsWith('(same') || !recipientInput ? '' : recipientInput;
 
   // Ask if user wants custom admin/reward per token
-  const customPerToken = await confirm({
-    message: 'Set different admin/reward for each token?',
-    default: false,
-  });
+  const customPerToken = await maybeConfirm(
+    {
+      message: 'Set different admin/reward for each token?',
+      default: false,
+    },
+    'optional'
+  );
 
   // Collect per-token admin/reward if requested
   const perTokenConfig: Array<{ tokenAdmin?: string; rewardRecipient?: string }> = [];
@@ -3447,62 +4000,52 @@ async function generateBatchTemplate(): Promise<void> {
 
   // First ask for fee type
   const feeType = await select({
-    message: 'Fee Type:',
+    message: 'Fee Configuration:',
     choices: [
-      { name: 'Static - Fixed fee percentage', value: 'static' as const },
-      { name: 'Dynamic - Auto-adjust based on volume', value: 'dynamic' as const },
+      { name: 'Dynamic - 1-5% based on volatility (recommended)', value: 'dynamic' as const },
+      { name: 'Flat - Fixed 3% fee', value: 'flat' as const },
+      { name: 'Custom - Manual 1-99% fee', value: 'custom' as const },
     ],
-    default: 'static' as const,
+    default: 'dynamic' as const,
   });
 
   // Fee configuration based on type
-  let fee = env.clankerFee;
-  let dynamicBaseFee = 1; // 1% minimum
-  let dynamicMaxFee = 10; // 10% maximum
+  let feePercentage = env.feePercentage;
+  let dynamicBaseFee: number | undefined;
+  let dynamicMaxFee: number | undefined;
 
-  if (feeType === 'static') {
-    // Static fee - single percentage
+  if (feeType === 'dynamic') {
+    feePercentage = 3.0; // Default dynamic fee
+    dynamicBaseFee = 100; // 1% base fee
+    dynamicMaxFee = 500; // 5% max fee
+    console.log(chalk.green(`  ✓ Dynamic fee: 1-5% (auto-adjusts based on volatility)`));
+  } else if (feeType === 'flat') {
+    // Flat fee - single percentage
     const feeInput = await input({
-      message: 'Fee % (1-80):',
-      default: String(env.clankerFee),
+      message: 'Flat fee % (0.1-50):',
+      default: '3',
       validate: (v) => {
         const n = Number(v);
-        return (n >= 1 && n <= 80) || 'Must be 1-80%';
+        return (n >= 0.1 && n <= 50) || 'Must be 0.1-50%';
       },
     });
-    fee = Number(feeInput);
+    feePercentage = Number(feeInput);
+    console.log(chalk.green(`  ✓ Flat fee: ${feePercentage}% (both Token and WETH)`));
   } else {
-    // Dynamic fee - base and max
-    console.log(chalk.gray('  Dynamic fee auto-adjusts based on trading volume'));
+    // Custom fee - manual percentage
+    console.log(chalk.gray('  Custom fee applies the same percentage to both Token and WETH'));
     console.log('');
 
-    const baseInput = await input({
-      message: 'Base fee % (minimum):',
-      default: '1',
+    const feeInput = await input({
+      message: 'Custom fee % (1-99):',
+      default: '5',
       validate: (v) => {
         const n = Number(v);
-        return (n >= 1 && n <= 10) || 'Must be 1-10%';
+        return (n >= 1 && n <= 99) || 'Must be 1-99%';
       },
     });
-    dynamicBaseFee = Number(baseInput);
-
-    const maxInput = await input({
-      message: 'Max fee % (maximum):',
-      default: '10',
-      validate: (v) => {
-        const n = Number(v);
-        return (n >= 1 && n <= 80) || 'Must be 1-80%';
-      },
-    });
-    dynamicMaxFee = Number(maxInput);
-
-    // Ensure max >= base
-    if (dynamicMaxFee < dynamicBaseFee) {
-      dynamicMaxFee = dynamicBaseFee;
-      console.log(chalk.yellow(`  Max fee adjusted to ${dynamicMaxFee}%`));
-    }
-
-    console.log(chalk.green(`  ✓ Dynamic fee: ${dynamicBaseFee}% - ${dynamicMaxFee}%`));
+    feePercentage = Number(feeInput);
+    console.log(chalk.green(`  ✓ Custom fee: ${feePercentage}% (both Token and WETH)`));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -3517,7 +4060,7 @@ async function generateBatchTemplate(): Promise<void> {
     default: String(env.mevBlockDelay),
     validate: (v) => {
       const n = Number(v);
-      return (n >= 0 && n <= 20) || 'Must be 0-20';
+      return (n >= 0 && n <= 50) || 'Must be 0-50';
     },
   });
   const mev = Number(mevInput);
@@ -3529,10 +4072,13 @@ async function generateBatchTemplate(): Promise<void> {
   console.log(chalk.white.bold('  STEP 8: VAULT SETTINGS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
-  const enableVault = await confirm({
-    message: 'Enable vault?',
-    default: env.vaultEnabled,
-  });
+  const enableVault = await maybeConfirm(
+    {
+      message: 'Enable vault?',
+      default: env.vaultEnabled,
+    },
+    'optional'
+  );
 
   let vault:
     | { enabled: boolean; percentage: number; lockupDays: number; vestingDays: number }
@@ -3576,15 +4122,15 @@ async function generateBatchTemplate(): Promise<void> {
     name,
     symbol,
     chain,
-    fee,
+    fee: feePercentage,
     mev,
-    feeType,
+    feeType: feeType === 'flat' ? 'static' : feeType === 'custom' ? 'static' : 'dynamic',
     dynamicBaseFee: feeType === 'dynamic' ? dynamicBaseFee : undefined,
     dynamicMaxFee: feeType === 'dynamic' ? dynamicMaxFee : undefined,
     image: image || undefined,
     description: description || undefined,
-    tokenAdmin: tokenAdmin || undefined,
-    rewardRecipient: rewardRecipient || undefined,
+    tokenAdmin: tokenAdmin,
+    rewardRecipient: rewardRecipient,
     socials,
     vault,
   });
@@ -3633,9 +4179,7 @@ async function generateBatchTemplate(): Promise<void> {
   console.log(chalk.cyan('  CONFIGURATION'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   const feeDisplay =
-    feeType === 'dynamic'
-      ? `${dynamicBaseFee}%-${dynamicMaxFee}% (dynamic)`
-      : `${fee}% (static)`;
+    feeType === 'dynamic' ? `${dynamicBaseFee}%-${dynamicMaxFee}% (dynamic)` : `${feePercentage}% (static)`;
   console.log(`  ${chalk.gray('Fee:')}      ${chalk.white(feeDisplay)}`);
   console.log(`  ${chalk.gray('MEV:')}      ${chalk.white(`${mev} blocks`)}`);
   console.log(`  ${chalk.gray('Admin:')}    ${chalk.white(tokenAdmin || '(deployer)')}`);
@@ -3716,6 +4260,362 @@ async function generateFarcasterTemplate(): Promise<void> {
   console.log(chalk.gray('  Create batch template using Farcaster profile data'));
   console.log('');
 
+  const flowMode = await select({
+    message: 'Mode:',
+    choices: [
+      { name: 'Quick (recommended)', value: 'quick' },
+      { name: 'Advanced (step-by-step)', value: 'advanced' },
+    ],
+    default: 'quick',
+  });
+
+  if (flowMode === 'quick') {
+    const farcasterInput = await input({
+      message: 'Farcaster username or FID:',
+      validate: (v) => (v.trim() ? true : 'Username or FID is required'),
+    });
+
+    process.stdout.write(chalk.gray('  Fetching Farcaster profile & wallets...'));
+    const walletsResult = await getUserWallets(farcasterInput);
+    process.stdout.write(`\r${' '.repeat(50)}\r`);
+
+    if (!walletsResult.success || !walletsResult.user) {
+      const message = walletsResult.error ? ` (${walletsResult.error})` : '';
+      console.log(chalk.red(`  ✗ Could not find Farcaster user: ${farcasterInput}${message}`));
+      console.log('');
+      await input({ message: 'Press Enter to continue...' });
+      return;
+    }
+
+    const fcUser = walletsResult.user;
+    const wallets = walletsResult.wallets;
+
+    console.log(chalk.green(`  ✓ Found: @${fcUser.username} (FID: ${fcUser.fid})`));
+    console.log(chalk.gray(`  Wallets: ${wallets.length}`));
+    console.log('');
+
+    const chainIdToName: Record<number, BatchChain> = {
+      8453: 'base',
+      1: 'ethereum',
+      42161: 'arbitrum',
+      130: 'unichain',
+      10143: 'monad',
+    };
+
+    const chainId = await select({
+      message: 'Chain:',
+      choices: [
+        { name: 'Base (8453)', value: 8453 },
+        { name: 'Ethereum (1)', value: 1 },
+        { name: 'Arbitrum (42161)', value: 42161 },
+        { name: 'Unichain (130)', value: 130 },
+        { name: 'Monad (10143)', value: 10143 },
+      ],
+      default: 8453,
+    });
+    const chain = chainIdToName[chainId];
+
+    let count = 1;
+    let useWalletAdmins = false;
+    let selectedWallets = wallets;
+
+    if (wallets.length > 0) {
+      const tokenCountMode = await select({
+        message: 'Token count:',
+        choices: [
+          { name: `1 per wallet (${wallets.length})`, value: 'wallets' },
+          { name: 'Single token (1)', value: 'single' },
+          { name: 'Custom', value: 'custom' },
+        ],
+        default: wallets.length > 1 ? 'wallets' : 'single',
+      });
+
+      if (tokenCountMode === 'wallets') {
+        count = wallets.length;
+        useWalletAdmins = true;
+      } else if (tokenCountMode === 'custom') {
+        const countInput = await input({
+          message: 'How many tokens (1-100):',
+          default: String(Math.min(5, Math.max(wallets.length, 1))),
+          validate: (v) => {
+            const n = Number(v);
+            return (n >= 1 && n <= 100) || 'Must be 1-100';
+          },
+        });
+        count = Number(countInput);
+
+        const adminMode = await select({
+          message: 'Admin mode:',
+          choices: [
+            { name: 'Single admin for all tokens', value: 'single' },
+            {
+              name: `Wallet-based admins (use first ${Math.min(count, wallets.length)} wallets)`,
+              value: 'wallets',
+            },
+          ],
+          default: count <= wallets.length ? 'wallets' : 'single',
+        });
+
+        if (adminMode === 'wallets') {
+          useWalletAdmins = true;
+          selectedWallets = wallets.slice(0, Math.min(count, wallets.length));
+          count = selectedWallets.length;
+        }
+      } else {
+        count = 1;
+      }
+    } else {
+      const countInput = await input({
+        message: 'How many tokens (1-100):',
+        default: '1',
+        validate: (v) => {
+          const n = Number(v);
+          return (n >= 1 && n <= 100) || 'Must be 1-100';
+        },
+      });
+      count = Number(countInput);
+    }
+
+    const suggestedName = fcUser.displayName || fcUser.username;
+    const suggestedSymbol = fcUser.username
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, 100);
+
+    let name = suggestedName;
+    let symbol = suggestedSymbol || 'TOKEN';
+    let image = normalizeImageUrl(fcUser.pfpUrl || '');
+    let description = fcUser.bio || `Token for @${fcUser.username}`;
+
+    const editTokenDetails = await confirm({
+      message: 'Edit token details?',
+      default: false,
+    });
+
+    if (editTokenDetails) {
+      name = await input({
+        message: 'Token name:',
+        default: name,
+        validate: (v) => (v.trim() ? true : 'Name is required'),
+      });
+
+      symbol = await input({
+        message: 'Token symbol:',
+        default: symbol,
+        validate: validateTokenSymbolInput,
+      });
+
+      const imageInput = await input({
+        message: 'Image URL (or IPFS CID):',
+        default: image || '',
+      });
+      image = normalizeImageUrl(imageInput);
+
+      description = await input({
+        message: 'Description:',
+        default: description,
+      });
+    }
+
+    let tokenAdmin = '';
+    let rewardRecipient = '';
+
+    if (!useWalletAdmins) {
+      const suggestedAdmin = wallets[0] || '';
+      const adminInput = await input({
+        message: 'Token Admin (0x...):',
+        default:
+          suggestedAdmin || env.tokenAdmin || `(deployer: ${deployerAddress.slice(0, 10)}...)`,
+      });
+      tokenAdmin = adminInput.startsWith('(deployer') || !adminInput ? '' : adminInput;
+
+      const recipientInput = await input({
+        message: 'Reward Recipient (0x...):',
+        default: env.rewardRecipient || '(same as admin)',
+      });
+      rewardRecipient = recipientInput.startsWith('(same') || !recipientInput ? '' : recipientInput;
+    } else {
+      if (env.rewardRecipient) {
+        rewardRecipient = env.rewardRecipient;
+      } else {
+        const setRecipient = await confirm({
+          message: 'Set reward recipient different from admin?',
+          default: false,
+        });
+
+        if (setRecipient) {
+          const recipientInput = await input({
+            message: 'Reward Recipient for all (0x...):',
+            validate: (v) => (v.trim() ? true : 'Recipient is required'),
+          });
+          rewardRecipient = recipientInput;
+        }
+      }
+    }
+
+    let feeType: 'static' | 'dynamic' | 'custom' = 'static';
+    let fee = env.feePercentage;
+    let dynamicBaseFee = 1;
+    let dynamicMaxFee = 5;
+    let mev = env.mevBlockDelay;
+
+    const useDefaults = await confirm({
+      message: 'Use default fee + MEV settings?',
+      default: true,
+    });
+
+    if (!useDefaults) {
+      feeType = await select({
+        message: 'Fee Type:',
+        choices: [
+          { name: 'Dynamic - 1-5% based on volatility (recommended)', value: 'dynamic' as const },
+          { name: 'Flat - Fixed fee percentage', value: 'static' as const },
+          { name: 'Custom - Manual 1-99% fee', value: 'custom' as const },
+        ],
+        default: 'dynamic' as const,
+      });
+
+      if (feeType === 'static') {
+        const feeInput = await input({
+          message: 'Fee % (1-80):',
+          default: String(env.feePercentage),
+          validate: (v) => {
+            const n = Number(v);
+            return (n >= 1 && n <= 80) || 'Must be 1-80%';
+          },
+        });
+        fee = Number(feeInput);
+      } else {
+        const baseInput = await input({
+          message: 'Base fee % (minimum):',
+          default: '1',
+          validate: (v) => {
+            const n = Number(v);
+            return (n >= 0.5 && n <= 5) || 'Must be 0.5-5%';
+          },
+        });
+        dynamicBaseFee = Number(baseInput);
+
+        const maxInput = await input({
+          message: 'Max fee % (maximum):',
+          default: '5',
+          validate: (v) => {
+            const n = Number(v);
+            return (n >= 0.5 && n <= 5) || 'Must be 0.5-5%';
+          },
+        });
+        dynamicMaxFee = Number(maxInput);
+
+        if (dynamicMaxFee < dynamicBaseFee) {
+          dynamicMaxFee = dynamicBaseFee;
+        }
+      }
+
+      const mevInput = await input({
+        message: 'MEV Block Delay (0=off, 8=default):',
+        default: String(env.mevBlockDelay),
+        validate: (v) => {
+          const n = Number(v);
+          return (n >= 0 && n <= 50) || 'Must be 0-50';
+        },
+      });
+      mev = Number(mevInput);
+    }
+
+    const socials = {
+      farcaster: String(fcUser.fid),
+    };
+
+    const template = generateTemplate(count, {
+      name,
+      symbol,
+      chain,
+      fee,
+      mev,
+      feeType: feeType === 'custom' ? 'static' : feeType,
+      dynamicBaseFee: feeType === 'dynamic' ? dynamicBaseFee : undefined,
+      dynamicMaxFee: feeType === 'dynamic' ? dynamicMaxFee : undefined,
+      image: image || undefined,
+      description: description || undefined,
+      tokenAdmin: tokenAdmin,
+      rewardRecipient: rewardRecipient,
+      socials,
+    });
+
+    for (let i = 0; i < template.tokens.length; i++) {
+      if (useWalletAdmins && i < selectedWallets.length) {
+        template.tokens[i].tokenAdmin = selectedWallets[i];
+      }
+      template.tokens[i].name = name;
+      template.tokens[i].symbol = symbol;
+    }
+
+    console.log('');
+    console.log(chalk.white.bold('  TEMPLATE PREVIEW'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log(`  ${chalk.gray('User:')}   @${fcUser.username}`);
+    console.log(`  ${chalk.gray('Chain:')}  ${chain}`);
+    console.log(`  ${chalk.gray('Tokens:')} ${template.tokens.length}`);
+    console.log(`  ${chalk.gray('Name:')}   ${name}`);
+    console.log(`  ${chalk.gray('Symbol:')} ${symbol}`);
+    console.log('');
+
+    const confirmSave = await confirm({
+      message: 'Save this template?',
+      default: true,
+    });
+
+    if (!confirmSave) {
+      console.log(chalk.yellow('  Template not saved.'));
+      await input({ message: 'Press Enter to continue...' });
+      return;
+    }
+
+    const templateName = await input({
+      message: 'Template name:',
+      default: `fc-${fcUser.username}`,
+    });
+
+    let filename = templateName.trim();
+    if (!filename.endsWith('.json')) {
+      filename = `${filename}.json`;
+    }
+    if (
+      !filename.startsWith('./templates/') &&
+      !filename.startsWith('templates/') &&
+      !path.isAbsolute(filename)
+    ) {
+      filename = `./templates/${filename}`;
+    }
+
+    const fullPath = path.resolve(filename);
+    const templatesDir = path.dirname(fullPath);
+    if (!fs.existsSync(templatesDir)) {
+      fs.mkdirSync(templatesDir, { recursive: true });
+    }
+
+    saveTemplate(template, fullPath);
+
+    console.log('');
+    console.log(chalk.green(`  ✓ Template saved to ${fullPath}`));
+    console.log('');
+
+    const deployNow = await confirm({
+      message: 'Deploy this template now?',
+      default: true,
+    });
+
+    if (deployNow) {
+      await deployBatchTemplateFromPath(fullPath);
+    } else {
+      console.log(chalk.gray('  You can deploy later using "Deploy from Template" option.'));
+      console.log('');
+      await input({ message: 'Press Enter to continue...' });
+    }
+
+    return;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Step 1: Farcaster User Lookup & Wallets
   // ─────────────────────────────────────────────────────────────────────────
@@ -3729,22 +4629,19 @@ async function generateFarcasterTemplate(): Promise<void> {
 
   process.stdout.write(chalk.gray('  Fetching Farcaster profile & wallets...'));
 
-  // Fetch user data and wallets in parallel
-  const [fcResult, walletsResult] = await Promise.all([
-    resolveUser(farcasterInput),
-    getUserWallets(farcasterInput),
-  ]);
+  const walletsResult = await getUserWallets(farcasterInput);
 
   process.stdout.write(`\r${' '.repeat(50)}\r`);
 
-  if (!fcResult.success || !fcResult.user) {
-    console.log(chalk.red(`  ✗ Could not find Farcaster user: ${farcasterInput}`));
+  if (!walletsResult.success || !walletsResult.user) {
+    const message = walletsResult.error ? ` (${walletsResult.error})` : '';
+    console.log(chalk.red(`  ✗ Could not find Farcaster user: ${farcasterInput}${message}`));
     console.log('');
     await input({ message: 'Press Enter to continue...' });
     return;
   }
 
-  const fcUser = fcResult.user;
+  const fcUser = walletsResult.user;
   const wallets = walletsResult.wallets;
 
   console.log(chalk.green(`  ✓ Found: @${fcUser.username} (FID: ${fcUser.fid})`));
@@ -3752,7 +4649,9 @@ async function generateFarcasterTemplate(): Promise<void> {
     console.log(chalk.gray(`    Display: ${fcUser.displayName}`));
   }
   if (fcUser.bio) {
-    console.log(chalk.gray(`    Bio: ${fcUser.bio.slice(0, 50)}${fcUser.bio.length > 50 ? '...' : ''}`));
+    console.log(
+      chalk.gray(`    Bio: ${fcUser.bio.slice(0, 50)}${fcUser.bio.length > 50 ? '...' : ''}`)
+    );
   }
   if (fcUser.pfpUrl) {
     console.log(chalk.gray(`    PFP: ✓ Available`));
@@ -3817,17 +4716,15 @@ async function generateFarcasterTemplate(): Promise<void> {
   });
 
   // Suggest symbol from username (uppercase, max 10 chars)
-  const suggestedSymbol = fcUser.username.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+  const suggestedSymbol = fcUser.username
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 100);
   const symbol = await input({
     message: 'Token symbol:',
     default: suggestedSymbol || 'TOKEN',
-    validate: (v) => {
-      if (!v.trim()) return 'Symbol is required';
-      if (v.length > 10) return 'Max 10 characters';
-      return true;
-    },
+    validate: validateTokenSymbolInput,
   });
-
 
   // Use profile picture as image
   const imageInput = await input({
@@ -3896,7 +4793,9 @@ async function generateFarcasterTemplate(): Promise<void> {
 
       console.log(chalk.green(`  ✓ Will use first ${walletCount} wallets:`));
       for (let i = 0; i < selectedWallets.length; i++) {
-        console.log(`    ${i + 1}. ${selectedWallets[i].slice(0, 10)}...${selectedWallets[i].slice(-8)}`);
+        console.log(
+          `    ${i + 1}. ${selectedWallets[i].slice(0, 10)}...${selectedWallets[i].slice(-8)}`
+        );
       }
     } else {
       const countInput = await input({
@@ -3945,7 +4844,7 @@ async function generateFarcasterTemplate(): Promise<void> {
 
     const recipientInput = await input({
       message: 'Reward Recipient for all (0x...):',
-      default: env.rewardRecipient || selectedWallets[0] || '(same as admin)',
+      default: env.rewardRecipient || '(same as admin)',
     });
     rewardRecipient = recipientInput.startsWith('(same') || !recipientInput ? '' : recipientInput;
   } else {
@@ -3979,20 +4878,21 @@ async function generateFarcasterTemplate(): Promise<void> {
   const feeType = await select({
     message: 'Fee Type:',
     choices: [
-      { name: 'Static - Fixed fee percentage', value: 'static' as const },
-      { name: 'Dynamic - Auto-adjust based on volume', value: 'dynamic' as const },
+      { name: 'Dynamic - 1-5% based on volatility (recommended)', value: 'dynamic' as const },
+      { name: 'Flat - Fixed fee percentage', value: 'static' as const },
+      { name: 'Custom - Manual 1-99% fee', value: 'custom' as const },
     ],
-    default: 'static' as const,
+    default: 'dynamic' as const,
   });
 
-  let fee = env.clankerFee;
+  let fee = env.feePercentage;
   let dynamicBaseFee = 1;
-  let dynamicMaxFee = 10;
+  let dynamicMaxFee = 5;
 
   if (feeType === 'static') {
     const feeInput = await input({
       message: 'Fee % (1-80):',
-      default: String(env.clankerFee),
+      default: String(env.feePercentage),
       validate: (v) => {
         const n = Number(v);
         return (n >= 1 && n <= 80) || 'Must be 1-80%';
@@ -4006,17 +4906,17 @@ async function generateFarcasterTemplate(): Promise<void> {
       default: '1',
       validate: (v) => {
         const n = Number(v);
-        return (n >= 1 && n <= 10) || 'Must be 1-10%';
+        return (n >= 0.5 && n <= 5) || 'Must be 0.5-5%';
       },
     });
     dynamicBaseFee = Number(baseInput);
 
     const maxInput = await input({
       message: 'Max fee % (maximum):',
-      default: '10',
+      default: '5',
       validate: (v) => {
         const n = Number(v);
-        return (n >= 1 && n <= 80) || 'Must be 1-80%';
+        return (n >= 0.5 && n <= 5) || 'Must be 0.5-5%';
       },
     });
     dynamicMaxFee = Number(maxInput);
@@ -4055,13 +4955,13 @@ async function generateFarcasterTemplate(): Promise<void> {
     chain,
     fee,
     mev,
-    feeType,
+    feeType: feeType === 'custom' ? 'static' : feeType,
     dynamicBaseFee: feeType === 'dynamic' ? dynamicBaseFee : undefined,
     dynamicMaxFee: feeType === 'dynamic' ? dynamicMaxFee : undefined,
     image: image || undefined,
     description: description || undefined,
-    tokenAdmin: tokenAdmin || undefined,
-    rewardRecipient: rewardRecipient || undefined,
+    tokenAdmin: tokenAdmin,
+    rewardRecipient: rewardRecipient,
     socials,
   });
 
@@ -4100,7 +5000,9 @@ async function generateFarcasterTemplate(): Promise<void> {
   console.log(`  ${chalk.gray('Tokens:')}  ${chalk.white(count)}`);
   console.log(`  ${chalk.gray('Name:')}    ${chalk.white(name)}`);
   console.log(`  ${chalk.gray('Symbol:')}  ${chalk.white(symbol)}`);
-  console.log(`  ${chalk.gray('Image:')}   ${image ? chalk.green('✓ Set') : chalk.yellow('○ Empty')}`);
+  console.log(
+    `  ${chalk.gray('Image:')}   ${image ? chalk.green('✓ Set') : chalk.yellow('○ Empty')}`
+  );
   console.log('');
 
   // Show token list preview
@@ -4110,7 +5012,9 @@ async function generateFarcasterTemplate(): Promise<void> {
   for (let i = 0; i < previewCount; i++) {
     const t = template.tokens[i];
     const adminDisplay = t.tokenAdmin ? `${t.tokenAdmin.slice(0, 8)}...` : '(default)';
-    console.log(`  ${chalk.gray(`[${i + 1}]`)} ${t.name} (${t.symbol}) → ${chalk.cyan(adminDisplay)}`);
+    console.log(
+      `  ${chalk.gray(`[${i + 1}]`)} ${t.name} (${t.symbol}) → ${chalk.cyan(adminDisplay)}`
+    );
   }
   if (template.tokens.length > 5) {
     console.log(chalk.gray(`  ... and ${template.tokens.length - 5} more tokens`));
@@ -4120,15 +5024,17 @@ async function generateFarcasterTemplate(): Promise<void> {
   console.log(chalk.cyan('  CONFIGURATION'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   const feeDisplay =
-    feeType === 'dynamic'
-      ? `${dynamicBaseFee}%-${dynamicMaxFee}% (dynamic)`
-      : `${fee}% (static)`;
+    feeType === 'dynamic' ? `${dynamicBaseFee}%-${dynamicMaxFee}% (dynamic)` : `${fee}% (static)`;
   console.log(`  ${chalk.gray('Fee:')}     ${chalk.white(feeDisplay)}`);
   console.log(`  ${chalk.gray('MEV:')}     ${chalk.white(`${mev} blocks`)}`);
 
   if (useWalletAdmins) {
-    console.log(`  ${chalk.gray('Mode:')}    ${chalk.cyan('Wallet-based (each token has unique admin)')}`);
-    console.log(`  ${chalk.gray('Admins:')}  ${chalk.white(`${selectedWallets.length} wallet addresses`)}`);
+    console.log(
+      `  ${chalk.gray('Mode:')}    ${chalk.cyan('Wallet-based (each token has unique admin)')}`
+    );
+    console.log(
+      `  ${chalk.gray('Admins:')}  ${chalk.white(`${selectedWallets.length} wallet addresses`)}`
+    );
   } else {
     console.log(`  ${chalk.gray('Admin:')}   ${chalk.white(tokenAdmin || '(deployer)')}`);
   }
@@ -4136,10 +5042,13 @@ async function generateFarcasterTemplate(): Promise<void> {
   console.log('');
 
   // Confirm before save
-  const confirmSave = await confirm({
-    message: 'Save this template?',
-    default: true,
-  });
+  const confirmSave = await maybeConfirm(
+    {
+      message: 'Save this template?',
+      default: true,
+    },
+    'optional'
+  );
 
   if (!confirmSave) {
     console.log(chalk.yellow('  Template not saved.'));
@@ -4179,10 +5088,13 @@ async function generateFarcasterTemplate(): Promise<void> {
   console.log('');
 
   // Ask if user wants to deploy now
-  const deployNow = await confirm({
-    message: 'Deploy this template now?',
-    default: false,
-  });
+  const deployNow = await maybeConfirm(
+    {
+      message: 'Deploy this template now?',
+      default: false,
+    },
+    'optional'
+  );
 
   if (deployNow) {
     // Deploy the template
@@ -4338,7 +5250,7 @@ async function executeBatchDeploy(
   const displayMev = defaults.mev ?? 8;
   const displayFeeType = defaults.feeType || 'static';
   const displayDynamicBase = defaults.dynamicBaseFee || 1;
-  const displayDynamicMax = defaults.dynamicMaxFee || 10;
+  const displayDynamicMax = defaults.dynamicMaxFee || 5;
   const displayRewardToken = defaults.rewardToken || 'Both';
 
   console.log(chalk.cyan('  DEFAULTS'));
@@ -4377,38 +5289,46 @@ async function executeBatchDeploy(
   console.log(chalk.cyan('  DEPLOY SETTINGS'));
   console.log(chalk.gray('  ─────────────────────────────────────'));
 
-  // Delay between deploys (always ask)
-  const defaultDelay = env.batchDelay || 3;
-  const delayInput = await input({
-    message: 'Delay between deploys (seconds):',
-    default: String(defaultDelay),
-    validate: (v) => {
-      const n = Number(v);
-      return (n >= 0 && n <= 300) || 'Must be 0-300 seconds';
-    },
+  const deployMode = await select({
+    message: 'Deploy mode:',
+    choices: [
+      { name: 'Quick (recommended)', value: 'quick' },
+      { name: 'Advanced (configure delays/retries)', value: 'advanced' },
+    ],
+    default: 'quick',
   });
-  const deployDelay = Number(delayInput);
+
+  const defaultDelay = env.batchDelay || 3;
 
   // Other settings
+  let deployDelay = defaultDelay;
   let deployRetries = env.batchRetries || 2;
   let randomDelayMin = 0;
   let randomDelayMax = 0;
   let startFromIndex = 0;
 
-  const wantMoreSettings = await confirm({
-    message: 'Configure advanced settings?',
-    default: false,
-  });
+  if (deployMode === 'advanced') {
+    const delayInput = await input({
+      message: 'Delay between deploys (seconds):',
+      default: String(defaultDelay),
+      validate: (v) => {
+        const n = Number(v);
+        return (n >= 0 && n <= 300) || 'Must be 0-300 seconds';
+      },
+    });
+    deployDelay = Number(delayInput);
 
-  if (wantMoreSettings) {
     console.log('');
     console.log(chalk.cyan('  ADVANCED SETTINGS'));
     console.log(chalk.gray('  ─────────────────────────────────────'));
 
-    const useRandomDelay = await confirm({
-      message: 'Add random delay variation?',
-      default: false,
-    });
+    const useRandomDelay = await maybeConfirm(
+      {
+        message: 'Add random delay variation?',
+        default: false,
+      },
+      'optional'
+    );
 
     if (useRandomDelay) {
       const minRandom = await input({
@@ -4447,10 +5367,13 @@ async function executeBatchDeploy(
     deployRetries = Number(newRetries);
 
     if (template.tokens.length > 1) {
-      const wantStartFrom = await confirm({
-        message: 'Start from specific token index?',
-        default: false,
-      });
+      const wantStartFrom = await maybeConfirm(
+        {
+          message: 'Start from specific token index?',
+          default: false,
+        },
+        'optional'
+      );
 
       if (wantStartFrom) {
         const startIdx = await input({
@@ -4468,6 +5391,8 @@ async function executeBatchDeploy(
 
     console.log('');
     console.log(chalk.green('  ✓ Deploy settings updated'));
+  } else {
+    console.log(chalk.gray(`  Quick mode: delay=${deployDelay}s, retries=${deployRetries}`));
   }
 
   // Display final settings
@@ -4477,7 +5402,9 @@ async function executeBatchDeploy(
       ? `${deployDelay}s + random ${randomDelayMin}-${randomDelayMax}s`
       : `${deployDelay}s between deploys`;
   console.log(`  ${chalk.gray('Delay:')}     ${chalk.white(delayDisplay)}`);
-  console.log(`  ${chalk.gray('Retries:')}   ${chalk.white(`${deployRetries} attempts on failure`)}`);
+  console.log(
+    `  ${chalk.gray('Retries:')}   ${chalk.white(`${deployRetries} attempts on failure`)}`
+  );
   if (startFromIndex > 0) {
     console.log(
       `  ${chalk.gray('Start:')}     ${chalk.yellow(`Token #${startFromIndex + 1} (skipping ${startFromIndex})`)}`
@@ -4542,10 +5469,13 @@ async function executeBatchDeploy(
       console.log(chalk.red(`    Current balance: ${gasEstimate.balance} ${symbol}`));
       console.log('');
 
-      const continueAnyway = await confirm({
-        message: chalk.yellow('Continue anyway? (may fail)'),
-        default: false,
-      });
+      const continueAnyway = await maybeConfirm(
+        {
+          message: chalk.yellow('Continue anyway? (may fail)'),
+          default: false,
+        },
+        'safety'
+      );
 
       if (!continueAnyway) {
         console.log(chalk.yellow('\n  Cancelled. Please add more funds.\n'));
@@ -4565,10 +5495,13 @@ async function executeBatchDeploy(
       : `Deploy ${template.tokens.length} tokens on ${chainName}?`;
 
   // Confirm
-  const confirmed = await confirm({
-    message: confirmMsg,
-    default: gasEstimate?.sufficient ?? true,
-  });
+  const confirmed = await maybeConfirm(
+    {
+      message: confirmMsg,
+      default: gasEstimate?.sufficient ?? true,
+    },
+    'transaction'
+  );
 
   if (!confirmed) {
     console.log(chalk.yellow('\n  Cancelled.\n'));
@@ -4672,7 +5605,9 @@ async function executeBatchDeploy(
     console.log(chalk.gray('  ─────────────────────────────────────'));
     console.log(`  ${chalk.gray('Deployed:')}  ${chalk.green(deployed.length)} tokens`);
     console.log(`  ${chalk.gray('Failed:')}    ${chalk.red(failed.length)} tokens`);
-    console.log(`  ${chalk.gray('Duration:')}  ${chalk.white(batchFormatDuration(summary.duration))}`);
+    console.log(
+      `  ${chalk.gray('Duration:')}  ${chalk.white(batchFormatDuration(summary.duration))}`
+    );
     console.log(`  ${chalk.gray('Chain:')}     ${chalk.white(chainName)}`);
     console.log(`  ${chalk.gray('Deployer:')}  ${chalk.white(deployerAddress.slice(0, 10))}...`);
     console.log('');
@@ -4700,10 +5635,13 @@ async function executeBatchDeploy(
   }
 
   // Save results to templates/results folder
-  const shouldSave = await confirm({
-    message: 'Save results to file?',
-    default: true,
-  });
+  const shouldSave = await maybeConfirm(
+    {
+      message: 'Save results to file?',
+      default: !isFastMode(),
+    },
+    'optional'
+  );
 
   if (shouldSave) {
     // Create results folder if not exists
@@ -4713,7 +5651,9 @@ async function executeBatchDeploy(
     }
 
     // Generate filename from template name
-    const templateBaseName = (template.name || 'batch').replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase();
+    const templateBaseName = (template.name || 'batch')
+      .replace(/[^a-zA-Z0-9-_]/g, '-')
+      .toLowerCase();
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
     // Ask for custom name
@@ -4735,10 +5675,13 @@ async function executeBatchDeploy(
 
   // Generate shareable text report
   if (deployed.length > 0) {
-    const generateReport = await confirm({
-      message: 'Generate shareable report?',
-      default: true,
-    });
+    const generateReport = await maybeConfirm(
+      {
+        message: 'Generate shareable report?',
+        default: !isFastMode(),
+      },
+      'optional'
+    );
 
     if (generateReport) {
       // Create results folder if not exists
@@ -4747,7 +5690,9 @@ async function executeBatchDeploy(
         fs.mkdirSync(resultsDir, { recursive: true });
       }
 
-      const templateBaseName = (template.name || 'batch').replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase();
+      const templateBaseName = (template.name || 'batch')
+        .replace(/[^a-zA-Z0-9-_]/g, '-')
+        .toLowerCase();
       const reportTimestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const reportPath = path.join(resultsDir, `${templateBaseName}-${reportTimestamp}.txt`);
 
@@ -4791,7 +5736,9 @@ async function executeBatchDeploy(
       console.log(chalk.cyan('  SHAREABLE LINKS'));
       console.log(chalk.gray('  ─────────────────────────────────────'));
       console.log(
-        chalk.cyan(`  📊 All Tokens: https://www.defined.fi/tokens/discover?creatorAddress=${deployerAddress}`)
+        chalk.cyan(
+          `  📊 All Tokens: https://www.defined.fi/tokens/discover?creatorAddress=${deployerAddress}`
+        )
       );
       console.log('');
     }
@@ -4832,6 +5779,27 @@ async function main(): Promise<void> {
   // Interactive mode (default)
   await showAnimatedLogo();
 
+  // Validate environment configuration at startup
+  const envConfig = getEnvConfig();
+  const validation = validateEnvConfig(envConfig);
+  
+  if (!validation.valid) {
+    console.log('');
+    console.log(chalk.red.bold('  ❌ CONFIGURATION ERROR'));
+    console.log(chalk.gray('  ─────────────────────────────────────'));
+    console.log('');
+    
+    for (const error of validation.errors) {
+      console.log(chalk.red(`  • ${error}`));
+    }
+    
+    console.log('');
+    console.log(chalk.yellow('  Please fix the errors in your .env file and try again.'));
+    console.log('');
+    
+    process.exit(1);
+  }
+
   let running = true;
   while (running) {
     try {
@@ -4839,7 +5807,12 @@ async function main(): Promise<void> {
 
       switch (action) {
         case 'deploy': {
-          let tokenInfo = await collectTokenInfo();
+          const initialTokenInfo = await collectTokenInfo();
+          if (!initialTokenInfo) {
+            break;
+          }
+
+          let tokenInfo = initialTokenInfo;
           let deployAction: 'menu' | 'retry' | 'other_chain' = 'retry';
 
           while (deployAction !== 'menu') {
@@ -4851,41 +5824,19 @@ async function main(): Promise<void> {
             deployAction = await deployToken(tokenInfo);
 
             if (deployAction === 'retry') {
-              tokenInfo = await collectTokenInfo();
+              const nextTokenInfo = await collectTokenInfo();
+              if (!nextTokenInfo) {
+                break;
+              }
+              tokenInfo = nextTokenInfo;
             }
           }
           break;
         }
 
-        case 'batch_deploy':
-          await showBatchDeployMenu();
+        case 'batch_farcaster':
+          await showBatchFarcasterMenu();
           break;
-
-        case 'manage': {
-          let manageRunning = true;
-          while (manageRunning) {
-            const manageAction = await showManageMenu();
-            if (manageAction === 'back') {
-              manageRunning = false;
-            } else {
-              await handleManageAction(manageAction);
-            }
-          }
-          break;
-        }
-
-        case 'claim': {
-          let claimRunning = true;
-          while (claimRunning) {
-            const claimAction = await showClaimMenu();
-            if (claimAction === 'back') {
-              claimRunning = false;
-            } else {
-              await handleClaimAction(claimAction);
-            }
-          }
-          break;
-        }
 
         case 'wallet':
           await showWalletInfo();
@@ -4893,11 +5844,6 @@ async function main(): Promise<void> {
 
         case 'settings':
           await showSettings();
-          break;
-
-        case 'help':
-          showHelp();
-          await input({ message: 'Press Enter...' });
           break;
 
         case 'exit':

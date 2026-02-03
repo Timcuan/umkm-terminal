@@ -1,0 +1,157 @@
+{
+  "name": "@umkm-terminal/cli-ux-optimization",
+  "version": "1.0.0",
+  "description": "CLI User Experience Optimization system for UMKM Terminal",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "node build.config.js build",
+    "dev": "node build.config.js dev",
+    "watch": "node build.config.js watch",
+    "clean": "node build.config.js clean",
+    "test": "node build.config.js test",
+    "test:watch": "jest --config testing/jest.config.js --watch",
+    "test:coverage": "jest --config testing/jest.config.js --coverage",
+    "test:property": "node build.config.js test:property",
+    "lint": "node build.config.js lint",
+    "lint:fix": "eslint **/*.ts --fix",
+    "format": "node build.config.js format",
+    "format:check": "prettier --check **/*.ts",
+    "docs": "node build.config.js docs",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run lint && npm run typecheck && npm run test",
+    "prepublishOnly": "npm run validate && npm run build"
+  },
+  "keywords": [
+    "cli",
+    "user-experience",
+    "optimization",
+    "umkm-terminal",
+    "typescript",
+    "property-based-testing",
+    "cross-platform"
+  ],
+  "author": "UMKM Terminal Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^4.0.0",
+    "chalk": "^5.3.0",
+    "commander": "^11.0.0",
+    "conf": "^11.0.0",
+    "cosmiconfig": "^8.3.0",
+    "debug": "^4.3.4",
+    "dotenv": "^16.3.0",
+    "execa": "^8.0.0",
+    "fs-extra": "^11.1.0",
+    "globby": "^13.2.0",
+    "listr2": "^7.0.0",
+    "lodash": "^4.17.21",
+    "ora": "^7.0.0",
+    "p-limit": "^4.0.0",
+    "p-queue": "^7.4.0",
+    "semver": "^7.5.0",
+    "update-notifier": "^6.0.0",
+    "yargs": "^17.7.0"
+  },
+  "devDependencies": {
+    "@types/debug": "^4.1.8",
+    "@types/fs-extra": "^11.0.1",
+    "@types/jest": "^29.5.0",
+    "@types/lodash": "^4.14.195",
+    "@types/node": "^20.4.0",
+    "@types/semver": "^7.5.0",
+    "@types/yargs": "^17.0.24",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "chokidar": "^3.5.3",
+    "eslint": "^8.44.0",
+    "eslint-config-prettier": "^8.8.0",
+    "eslint-plugin-jest": "^27.2.0",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "fast-check": "^3.12.0",
+    "jest": "^29.6.0",
+    "jest-junit": "^16.0.0",
+    "prettier": "^3.0.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.0",
+    "typedoc": "^0.24.0",
+    "typescript": "^5.1.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=4.9.0"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/umkm-terminal/cli-ux-optimization.git"
+  },
+  "bugs": {
+    "url": "https://github.com/umkm-terminal/cli-ux-optimization/issues"
+  },
+  "homepage": "https://github.com/umkm-terminal/cli-ux-optimization#readme",
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "setupFilesAfterEnv": ["<rootDir>/testing/setup.ts"],
+    "testMatch": ["**/*.test.ts", "**/*.spec.ts"],
+    "collectCoverageFrom": [
+      "**/*.ts",
+      "!**/*.test.ts",
+      "!**/*.spec.ts",
+      "!testing/**/*",
+      "!types.ts",
+      "!interfaces.ts"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    }
+  },
+  "eslintConfig": {
+    "extends": [
+      "@typescript-eslint/recommended",
+      "prettier"
+    ],
+    "parser": "@typescript-eslint/parser",
+    "plugins": [
+      "@typescript-eslint",
+      "jest"
+    ],
+    "rules": {
+      "@typescript-eslint/no-unused-vars": "error",
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/explicit-function-return-type": "warn",
+      "prefer-const": "error",
+      "no-var": "error"
+    },
+    "env": {
+      "node": true,
+      "jest": true
+    }
+  },
+  "prettier": {
+    "semi": true,
+    "trailingComma": "es5",
+    "singleQuote": true,
+    "printWidth": 100,
+    "tabWidth": 2,
+    "useTabs": false
+  }
+}

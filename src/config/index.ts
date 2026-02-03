@@ -147,7 +147,9 @@ export function getChainName(chainId: number): string {
 // Config Validator
 // ============================================================================
 
-export function validateConfig(config: ClankerEnvConfig): string[] {
+import { Result, success, failure } from '../errors/standardized-errors.js';
+
+export function validateConfig(config: ClankerEnvConfig): Result<ClankerEnvConfig, string[]> {
   const errors: string[] = [];
 
   if (!config.privateKey || !config.privateKey.startsWith('0x')) {
@@ -182,5 +184,19 @@ export function validateConfig(config: ClankerEnvConfig): string[] {
     }
   }
 
-  return errors;
+  if (errors.length > 0) {
+    return failure(errors);
+  }
+
+  return success(config);
+}
+
+/**
+ * Legacy function that throws on validation errors (for backward compatibility)
+ */
+export function validateConfigOrThrow(config: ClankerEnvConfig): void {
+  const result = validateConfig(config);
+  if (!result.success) {
+    throw new Error(`Configuration validation failed: ${result.error.join(', ')}`);
+  }
 }

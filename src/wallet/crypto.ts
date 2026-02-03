@@ -5,10 +5,10 @@
  */
 
 import * as crypto from 'node:crypto';
-import { generatePrivateKey, privateKeyToAccount, mnemonicToAccount, english } from 'viem/accounts';
-import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { HDKey } from '@scure/bip32';
-import type { ValidationResult, WalletInfo } from './types.js';
+import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
+import { english, generatePrivateKey, mnemonicToAccount, privateKeyToAccount } from 'viem/accounts';
+import type { WalletInfo } from './types.js';
 
 // ============================================================================
 // Constants
@@ -45,10 +45,7 @@ export function encrypt(plaintext: string, password: string): string {
   const key = deriveKey(password, salt);
 
   const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
-  const encrypted = Buffer.concat([
-    cipher.update(plaintext, 'utf8'),
-    cipher.final(),
-  ]);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const authTag = cipher.getAuthTag();
 
   // Combine: salt + iv + authTag + ciphertext
@@ -66,7 +63,10 @@ export function decrypt(encryptedData: string, password: string): string {
     // Extract components
     const salt = combined.subarray(0, SALT_LENGTH);
     const iv = combined.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
-    const authTag = combined.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
+    const authTag = combined.subarray(
+      SALT_LENGTH + IV_LENGTH,
+      SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH
+    );
     const ciphertext = combined.subarray(SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
 
     const key = deriveKey(password, salt);
@@ -74,10 +74,7 @@ export function decrypt(encryptedData: string, password: string): string {
     const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, key, iv);
     decipher.setAuthTag(authTag);
 
-    const decrypted = Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ]);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 
     return decrypted.toString('utf8');
   } catch {
@@ -89,10 +86,12 @@ export function decrypt(encryptedData: string, password: string): string {
 // Private Key Validation
 // ============================================================================
 
+import { Result, success, failure } from '../errors/standardized-errors.js';
+
 /**
  * Validate private key format and derive address
  */
-export function validatePrivateKey(key: string): ValidationResult {
+export function validatePrivateKey(key: string): Result<{ address: string; normalizedKey: string }, string> {
   let cleanKey = key.trim();
 
   // Add 0x prefix if missing
@@ -102,25 +101,48 @@ export function validatePrivateKey(key: string): ValidationResult {
 
   // Check length (66 chars with 0x prefix = 64 hex chars)
   if (cleanKey.length !== 66) {
-    return {
-      valid: false,
-      error: `Invalid length: expected 64 hex characters, got ${cleanKey.length - 2}`,
-    };
+    return failure(`Invalid length: expected 64 hex characters, got ${cleanKey.length - 2}`);
   }
 
   // Check if it's valid hex
   if (!/^0x[0-9a-fA-F]{64}$/.test(cleanKey)) {
-    return { valid: false, error: 'Invalid format: must be hexadecimal characters only' };
+    return failure('Invalid format: must be hexadecimal characters only');
   }
 
   // Try to derive address
   try {
     const account = privateKeyToAccount(cleanKey as `0x${string}`);
-    return { valid: true, address: account.address, normalizedKey: cleanKey };
+    return success({ address: account.address, normalizedKey: cleanKey });
   } catch (err) {
+    return failure(`Invalid key: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Legacy validation result interface (for backward compatibility)
+ */
+export interface ValidationResult {
+  valid: boolean;
+  error?: string;
+  address?: string;
+  normalizedKey?: string;
+}
+
+/**
+ * Legacy function that returns the old format (for backward compatibility)
+ */
+export function validatePrivateKeyLegacy(key: string): ValidationResult {
+  const result = validatePrivateKey(key);
+  if (result.success) {
+    return {
+      valid: true,
+      address: result.data.address,
+      normalizedKey: result.data.normalizedKey
+    };
+  } else {
     return {
       valid: false,
-      error: `Invalid key: ${err instanceof Error ? err.message : 'Unknown error'}`,
+      error: result.error
     };
   }
 }
@@ -139,8 +161,23 @@ export function generateMnemonicPhrase(): string {
 /**
  * Validate mnemonic phrase
  */
-export function validateMnemonicPhrase(mnemonic: string): boolean {
-  return validateMnemonic(mnemonic, english);
+export function validateMnemonicPhrase(mnemonic: string): Result<string, string> {
+  const trimmed = mnemonic.trim();
+  const isValid = validateMnemonic(trimmed, english);
+  
+  if (!isValid) {
+    return failure('Invalid mnemonic phrase');
+  }
+  
+  return success(trimmed);
+}
+
+/**
+ * Legacy function that returns boolean (for backward compatibility)
+ */
+export function validateMnemonicPhraseLegacy(mnemonic: string): boolean {
+  const result = validateMnemonicPhrase(mnemonic);
+  return result.success;
 }
 
 /**
@@ -154,11 +191,11 @@ export function mnemonicToPrivateKey(mnemonic: string, index = 0): string | null
 
     const seed = mnemonicToSeedSync(mnemonic);
     const hdKey = HDKey.fromMasterSeed(seed);
-    
+
     // Use standard path with account index
     const path = `m/44'/60'/0'/0/${index}`;
     const derived = hdKey.derive(path);
-    
+
     if (!derived.privateKey) {
       return null;
     }
@@ -195,7 +232,7 @@ export function generateWalletWithMnemonic(): {
 } {
   const mnemonic = generateMnemonicPhrase();
   const privateKey = mnemonicToPrivateKey(mnemonic, 0);
-  
+
   if (!privateKey) {
     throw new Error('Failed to derive private key from mnemonic');
   }
@@ -230,7 +267,7 @@ export function generateWallet(): WalletInfo {
  */
 export function getAddressFromKey(privateKey: string): string | null {
   const result = validatePrivateKey(privateKey);
-  return result.valid ? result.address || null : null;
+  return result.success ? result.data.address : null;
 }
 
 /**

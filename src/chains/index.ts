@@ -92,3 +92,13 @@ export function getSupportedChainIds(): SupportedChainId[] {
 
 // Re-export viem chains for convenience
 export { arbitrum, base, mainnet, unichain };
+
+// Export feature detection utilities
+export {
+  type ChainFeatures,
+  getAllChainFeatures,
+  getChainFeatures,
+  getChainsWithFeature,
+  hasDynamicFees,
+  hasMevProtection,
+} from './features.js';

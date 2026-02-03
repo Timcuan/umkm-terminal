@@ -117,19 +117,39 @@ const MevBlockDelayAbi = [{ name: 'blockDelay', type: 'uint256' }] as const;
 
 /**
  * Generate random salt for CREATE2
+ * For single deploy, ensures salt does NOT end with 'b07' (Clanker standard)
+ * to avoid vanity address patterns and maintain standard Clanker behavior
  */
 function generateSalt(): `0x${string}` {
-  const bytes = new Uint8Array(32);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < 32; i++) {
-      bytes[i] = Math.floor(Math.random() * 256);
+  let salt: `0x${string}`;
+  let attempts = 0;
+  const maxAttempts = 100; // Prevent infinite loop
+  
+  do {
+    const bytes = new Uint8Array(32);
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < 32; i++) {
+        bytes[i] = Math.floor(Math.random() * 256);
+      }
     }
+    
+    salt = `0x${Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')}` as `0x${string}`;
+    
+    attempts++;
+  } while (salt.toLowerCase().endsWith('b07') && attempts < maxAttempts);
+  
+  // If we couldn't avoid 'b07' after max attempts, modify the last byte
+  if (salt.toLowerCase().endsWith('b07')) {
+    const bytes = salt.slice(2);
+    const modifiedBytes = bytes.slice(0, -2) + 'a06'; // Change 'b07' to 'a06'
+    salt = `0x${modifiedBytes}` as `0x${string}`;
   }
-  return `0x${Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')}` as `0x${string}`;
+  
+  return salt;
 }
 
 /**
@@ -290,6 +310,8 @@ export function buildDeploymentConfig(
       tokenAdmin: token.tokenAdmin,
       name: token.name,
       symbol: token.symbol,
+      // For single deploy: use provided salt or generate non-vanity salt
+      // Ensures compliance with Clanker standard (B07) by avoiding vanity patterns
       salt: token.salt ?? generateSalt(),
       image: token.image ?? '',
       metadata: token.metadata ? JSON.stringify(token.metadata) : '',
@@ -357,12 +379,12 @@ export async function deployToken(
   // Build deployment config
   const config = buildDeploymentConfig(token, deployment);
 
-  // Simulate first - use type assertion for complex ABI args
+  // Simulate first - use proper typed args
   const { request } = await publicClient.simulateContract({
     address: config.address,
     abi: ClankerFactoryAbi,
     functionName: 'deployToken',
-    args: [config.args] as unknown as readonly [never],
+    args: [config.args],
     value: config.value,
     account: wallet.account,
   });

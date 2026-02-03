@@ -1,0 +1,44 @@
+{
+  "name": "Batch 2x GARRYTAN",
+  "description": "Deploy 2 realgarrytan tokens",
+  "chain": "base",
+  "defaults": {
+    "fee": 5,
+    "mev": 8,
+    "feeType": "static",
+    "tokenAdmin": "",
+    "rewardRecipient": "0x3A1dc8C3C1A28853b8002AeBaF98F604c4c51795",
+    "rewardToken": "Both",
+    "image": "https://avatars.githubusercontent.com/u/19957?s=400&u=d95c4a92ff27aea2b16949b1a31b434c61b64453&v=4",
+    "description": "Token for @garrytan",
+    "socials": {
+      "farcaster": "72"
+    },
+    "interfaceName": "UMKM Terminal",
+    "platformName": "Clanker"
+  },
+  "tokens": [
+    {
+      "name": "realgarrytan",
+      "symbol": "GARRYTAN",
+      "image": "https://avatars.githubusercontent.com/u/19957?s=400&u=d95c4a92ff27aea2b16949b1a31b434c61b64453&v=4",
+      "description": "Token for @garrytan",
+      "socials": {
+        "farcaster": "72"
+      },
+      "tokenAdmin": "0xf6A40Cd52A582b200C8A87A15804073522DBa2c7",
+      "rewardRecipients": []
+    },
+    {
+      "name": "realgarrytan",
+      "symbol": "GARRYTAN",
+      "image": "https://avatars.githubusercontent.com/u/19957?s=400&u=d95c4a92ff27aea2b16949b1a31b434c61b64453&v=4",
+      "description": "Token for @garrytan",
+      "socials": {
+        "farcaster": "72"
+      },
+      "tokenAdmin": "0x8c0580ac47d5526654810a22f4f99ba47F7e4cdE",
+      "rewardRecipients": []
+    }
+  ]
+}

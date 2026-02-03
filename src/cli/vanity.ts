@@ -50,8 +50,17 @@ const FACTORY_ADDRESSES: Record<number, `0x${string}`> = {
   10143: '0xF9a0C289Eab6B571c6247094a853810987E5B26D', // Monad
 };
 
-// Default Clanker suffix pattern (standard Clanker behavior)
+// Default Clanker suffix pattern (reserved for Clanker standard)
+// NOTE: B07 is reserved for standard Clanker behavior and should NOT be used for vanity mining
 export const CLANKER_DEFAULT_SUFFIX = 'b07';
+
+// Alternative suffix patterns for vanity mining (avoiding B07)
+export const VANITY_SAFE_SUFFIXES = [
+  '000', '111', '222', '333', '444', '555', '666', '777', '888', '999',
+  'aaa', 'bbb', 'ccc', 'ddd', 'eee', 'fff', 'ace', 'bad', 'bed', 'cab',
+  'dab', 'fab', '420', '069', '007', '100', '123', '321', '911', 'dad',
+  'mom', 'bae', 'bff', 'wow', 'lol', 'a06', 'c08', 'd09' // Alternatives to B07
+];
 
 // Maximum time for vanity mining (in ms) to prevent deploy timeout
 export const MAX_MINING_TIME_MS = 30000; // 30 seconds
@@ -60,6 +69,7 @@ export const MAX_MINING_TIME_MS = 30000; // 30 seconds
 export type VanityMode = 'off' | 'random' | 'custom';
 
 // Popular 3-char suffix patterns for random mode (fast mining)
+// NOTE: Excludes 'b07' to maintain Clanker standard compliance
 const QUICK_SUFFIX_PATTERNS = [
   '000',
   '111',
@@ -98,10 +108,14 @@ const QUICK_SUFFIX_PATTERNS = [
   'bff',
   'wow',
   'lol',
+  'a06', // Alternative to b07
+  'c08', // Alternative to b07
+  'd09', // Alternative to b07
 ];
 
 /**
  * Get a random vanity suffix for "random" mode (3 chars only for speed)
+ * Excludes 'b07' to maintain Clanker standard compliance
  */
 export function getRandomVanityPattern(): { prefix?: string; suffix?: string } {
   const suffix = QUICK_SUFFIX_PATTERNS[Math.floor(Math.random() * QUICK_SUFFIX_PATTERNS.length)];
@@ -328,14 +342,21 @@ export async function mineVanitySalt(options: VanityMineOptions): Promise<Vanity
 }
 
 /**
- * Quick mine with short timeout - for default Clanker suffix
+ * Quick mine with short timeout - for alternative patterns (NOT B07)
  * Returns salt quickly or null if not found
+ * NOTE: Avoids B07 suffix to maintain Clanker standard compliance
  */
 export async function quickMineVanitySalt(
   tokenAdmin: `0x${string}`,
-  suffix: string = CLANKER_DEFAULT_SUFFIX,
+  suffix: string = 'a06', // Alternative to B07
   maxTimeMs: number = 10000
 ): Promise<`0x${string}` | null> {
+  // Warn if trying to use B07 (Clanker standard)
+  if (suffix.toLowerCase() === 'b07') {
+    console.warn('Warning: B07 suffix conflicts with Clanker standard. Using alternative pattern.');
+    suffix = 'a06'; // Use alternative
+  }
+  
   const startTime = Date.now();
   let userSalt = generateRandomSalt();
 
@@ -363,25 +384,45 @@ export async function quickMineVanitySalt(
   return null;
 }
 
+import { Result, success, failure } from '../errors/standardized-errors.js';
+
 /**
  * Validate vanity pattern - limited to 3 chars for suffix to avoid timeout
+ * Warns against using B07 (Clanker standard)
  */
-export function validateVanityPattern(pattern: string): { valid: boolean; error?: string } {
+export function validateVanityPattern(pattern: string): Result<string, string> {
   const cleaned = pattern.replace(/^0x/, '').toLowerCase();
 
   if (cleaned.length === 0) {
-    return { valid: true };
+    return success(cleaned);
+  }
+
+  // Check for Clanker standard conflict
+  if (cleaned === 'b07') {
+    return failure('B07 is reserved for Clanker standard. Use alternative pattern (e.g., a06, c08, d09)');
   }
 
   if (cleaned.length > 3) {
-    return { valid: false, error: 'Max 3 characters to avoid timeout during deploy' };
+    return failure('Max 3 characters to avoid timeout during deploy');
   }
 
   if (!/^[0-9a-f]*$/.test(cleaned)) {
-    return { valid: false, error: 'Must be hexadecimal (0-9, a-f)' };
+    return failure('Must be hexadecimal (0-9, a-f)');
   }
 
-  return { valid: true };
+  return success(cleaned);
+}
+
+/**
+ * Legacy function that returns the old format (for backward compatibility)
+ */
+export function validateVanityPatternLegacy(pattern: string): { valid: boolean; error?: string } {
+  const result = validateVanityPattern(pattern);
+  if (result.success) {
+    return { valid: true };
+  } else {
+    return { valid: false, error: result.error };
+  }
 }
 
 /**

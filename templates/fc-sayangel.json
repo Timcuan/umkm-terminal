@@ -1,0 +1,55 @@
+{
+  "name": "Batch 3x warplets",
+  "description": "Deploy 3 Warplets tokens",
+  "chain": "base",
+  "defaults": {
+    "fee": 5,
+    "mev": 8,
+    "feeType": "static",
+    "tokenAdmin": "",
+    "rewardRecipient": "0x3A1dc8C3C1A28853b8002AeBaF98F604c4c51795",
+    "rewardToken": "Both",
+    "image": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/f06ba86d-eef0-45b2-36d9-13cfddfb0f00/original",
+    "description": "@warpletsai guy | Cofounder @ Resolve (YC) - spatial tech for construction. FC tinkering: @livecaster @harmonybot |  I just want us to have fun.",
+    "socials": {
+      "farcaster": "1725"
+    },
+    "interfaceName": "UMKM Terminal",
+    "platformName": "Clanker"
+  },
+  "tokens": [
+    {
+      "name": "Warplets",
+      "symbol": "warplets",
+      "image": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/f06ba86d-eef0-45b2-36d9-13cfddfb0f00/original",
+      "description": "@warpletsai guy | Cofounder @ Resolve (YC) - spatial tech for construction. FC tinkering: @livecaster @harmonybot |  I just want us to have fun.",
+      "socials": {
+        "farcaster": "1725"
+      },
+      "tokenAdmin": "0xE90026C9FC8B5Fee2401C371ACd14e3a24AeDB3c",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Warplets",
+      "symbol": "warplets",
+      "image": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/f06ba86d-eef0-45b2-36d9-13cfddfb0f00/original",
+      "description": "@warpletsai guy | Cofounder @ Resolve (YC) - spatial tech for construction. FC tinkering: @livecaster @harmonybot |  I just want us to have fun.",
+      "socials": {
+        "farcaster": "1725"
+      },
+      "tokenAdmin": "0x88d0e89E7f502Aa49a564b683e19089c771776c3",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Warplets",
+      "symbol": "warplets",
+      "image": "https://imagedelivery.net/BXluQx4ige9GuW0Ia56BHw/f06ba86d-eef0-45b2-36d9-13cfddfb0f00/original",
+      "description": "@warpletsai guy | Cofounder @ Resolve (YC) - spatial tech for construction. FC tinkering: @livecaster @harmonybot |  I just want us to have fun.",
+      "socials": {
+        "farcaster": "1725"
+      },
+      "tokenAdmin": "0xF35ff7426e2dbE06305e71EaeE7E038E6dbAC620",
+      "rewardRecipients": []
+    }
+  ]
+}

@@ -5,13 +5,6 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type {
-  StoredWallet,
-  WalletBackup,
-  WalletInfo,
-  WalletOperationResult,
-  WalletStore,
-} from './types.js';
 import {
   decrypt,
   decryptLegacy,
@@ -20,15 +13,23 @@ import {
   isLegacyEncryption,
   validatePrivateKey,
 } from './crypto.js';
+import { migrateWallet, isLegacyWallet, type MigratableWallet } from '../types/deployment-args.js';
+import type {
+  StoredWallet,
+  WalletBackup,
+  WalletInfo,
+  WalletOperationResult,
+  WalletStore,
+} from './types.js';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const WALLET_DIR = '.umkm-wallets';        // Dedicated folder for wallet data
-const WALLET_STORE_FILE = 'store.json';    // Main wallet store
-const BACKUP_SUBDIR = 'backups';           // Backup files subfolder
-const STORE_VERSION = 2;                    // Version 2 = AES-256-GCM encryption
+const WALLET_DIR = '.umkm-wallets'; // Dedicated folder for wallet data
+const WALLET_STORE_FILE = 'store.json'; // Main wallet store
+const BACKUP_SUBDIR = 'backups'; // Backup files subfolder
+const STORE_VERSION = 2; // Version 2 = AES-256-GCM encryption
 const BACKUP_TYPE = 'umkm-wallet-backup';
 
 // ============================================================================
@@ -88,19 +89,19 @@ export function loadWalletStore(): WalletStore {
   try {
     const content = fs.readFileSync(storePath, 'utf8');
     const store = JSON.parse(content) as WalletStore;
-    
+
     // Migrate old format if needed
     if (store.version < STORE_VERSION) {
       store.version = STORE_VERSION;
-      // Old wallets use 'encrypted' field, new use 'encryptedKey'
-      for (const wallet of store.wallets) {
-        if ('encrypted' in wallet && !wallet.encryptedKey) {
-          (wallet as StoredWallet).encryptedKey = (wallet as unknown as { encrypted: string }).encrypted;
-          delete (wallet as unknown as { encrypted?: string }).encrypted;
+      // Migrate old wallets using type-safe migration
+      for (let i = 0; i < store.wallets.length; i++) {
+        const wallet = store.wallets[i] as MigratableWallet;
+        if (isLegacyWallet(wallet)) {
+          store.wallets[i] = migrateWallet(wallet);
         }
       }
     }
-    
+
     return store;
   } catch {
     return { version: STORE_VERSION, activeAddress: null, wallets: [] };
@@ -247,9 +248,7 @@ export function addWalletWithMnemonicToStore(
 export function removeWalletFromStore(address: string): WalletOperationResult {
   const store = loadWalletStore();
 
-  const index = store.wallets.findIndex(
-    (w) => w.address.toLowerCase() === address.toLowerCase()
-  );
+  const index = store.wallets.findIndex((w) => w.address.toLowerCase() === address.toLowerCase());
 
   if (index === -1) {
     return { success: false, error: 'Wallet not found' };
@@ -279,9 +278,7 @@ export function removeWalletFromStore(address: string): WalletOperationResult {
 export function setActiveWallet(address: string, password: string): WalletOperationResult {
   const store = loadWalletStore();
 
-  const wallet = store.wallets.find(
-    (w) => w.address.toLowerCase() === address.toLowerCase()
-  );
+  const wallet = store.wallets.find((w) => w.address.toLowerCase() === address.toLowerCase());
 
   if (!wallet) {
     return { success: false, error: 'Wallet not found' };
@@ -338,21 +335,24 @@ export function getAllWallets(): StoredWallet[] {
  */
 export function getWalletByAddress(address: string): StoredWallet | null {
   const store = loadWalletStore();
-  return store.wallets.find(
-    (w) => w.address.toLowerCase() === address.toLowerCase()
-  ) || null;
+  return store.wallets.find((w) => w.address.toLowerCase() === address.toLowerCase()) || null;
 }
 
 /**
  * Decrypt wallet private key (handles legacy and new encryption)
  */
 function decryptWalletKey(wallet: StoredWallet, password: string): string | null {
-  const encryptedData = wallet.encryptedKey || (wallet as unknown as { encrypted?: string }).encrypted;
+  // Type-safe access to encrypted data (handles legacy format)
+  const migratableWallet = wallet as MigratableWallet;
+  const encryptedData = isLegacyWallet(migratableWallet) 
+    ? migratableWallet.encrypted 
+    : wallet.encryptedKey;
+    
   if (!encryptedData) return null;
 
   // Try new encryption first
   let privateKey = decrypt(encryptedData, password);
-  
+
   // If failed and looks like legacy, try legacy decryption
   if (!privateKey && isLegacyEncryption(encryptedData)) {
     privateKey = decryptLegacy(encryptedData, password);
@@ -408,9 +408,7 @@ export function walletHasMnemonic(address: string): boolean {
 export function updateWalletName(address: string, newName: string): WalletOperationResult {
   const store = loadWalletStore();
 
-  const wallet = store.wallets.find(
-    (w) => w.address.toLowerCase() === address.toLowerCase()
-  );
+  const wallet = store.wallets.find((w) => w.address.toLowerCase() === address.toLowerCase());
 
   if (!wallet) {
     return { success: false, error: 'Wallet not found' };
@@ -596,7 +594,7 @@ export function importFromBackup(
 
   // Try to decrypt private key
   let privateKey = decrypt(backup.encrypted, password);
-  
+
   // Try legacy decryption if new format fails
   if (!privateKey && isLegacyEncryption(backup.encrypted)) {
     privateKey = decryptLegacy(backup.encrypted, password);
@@ -668,12 +666,12 @@ export function migrateOldWalletStore(): boolean {
     try {
       const oldContent = fs.readFileSync(oldStorePath, 'utf8');
       const newStorePath = getStorePath();
-      
+
       if (!fs.existsSync(newStorePath)) {
         fs.writeFileSync(newStorePath, oldContent, { mode: 0o600 });
         migrated = true;
       }
-      
+
       // Rename old file as backup
       fs.renameSync(oldStorePath, `${oldStorePath}.bak`);
     } catch {
@@ -686,11 +684,11 @@ export function migrateOldWalletStore(): boolean {
     try {
       const newBackupDir = getBackupDir();
       const files = fs.readdirSync(oldBackupDir).filter((f) => f.endsWith('.json'));
-      
+
       for (const file of files) {
         const oldPath = path.join(oldBackupDir, file);
         const newPath = path.join(newBackupDir, file);
-        
+
         if (!fs.existsSync(newPath)) {
           fs.copyFileSync(oldPath, newPath);
           migrated = true;

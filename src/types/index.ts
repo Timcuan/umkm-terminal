@@ -2,6 +2,53 @@
  * Core Types for Clanker SDK
  */
 
+// Export base types first
+export type * from './base-types.js';
+
+// Export comprehensive public API types
+export type * from './public-api.js';
+
+// Export configuration types (excluding duplicates)
+export type {
+  TokenConfiguration,
+  BatchConfiguration,
+  SocialConfiguration,
+  DeploymentContext,
+  ValidationConfiguration,
+  ServiceResultDetails,
+  RewardRecipientOptions,
+  StructuredMetadata,
+  WalletStatistics,
+  RewardRecipientConfiguration,
+  FeeConfiguration,
+  VaultConfiguration,
+  BatchDeploymentOptions
+} from './configuration.js';
+
+// Export deployment argument types
+export type * from './deployment-args.js';
+
+// Export runtime validation types and functions
+export type * from './runtime-validation.js';
+export {
+  validateAddress,
+  validateChainId,
+  validateTokenName,
+  validateTokenSymbol,
+  validateFeeConfig,
+  validateRewardRecipient,
+  validateVaultConfig,
+  validateClankerTokenV4,
+  validateSimpleDeployConfiguration,
+  validateBatchDeploymentOptions,
+  combineValidationResults,
+  createValidationContext,
+  validateArray
+} from './runtime-validation.js';
+
+// Export Clanker API types
+export type { OperationMethod } from '../clanker-api/types/config-types.js';
+
 // ============================================================================
 // Token Types
 // ============================================================================

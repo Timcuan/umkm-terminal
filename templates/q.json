@@ -1,0 +1,121 @@
+{
+  "name": "Batch 9x THINK",
+  "description": "Deploy 9 Thoughtcoin tokens",
+  "chain": "base",
+  "defaults": {
+    "fee": 5,
+    "mev": 8,
+    "feeType": "static",
+    "tokenAdmin": "",
+    "rewardRecipient": "",
+    "rewardToken": "Both",
+    "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+    "description": "This is the first deployment from ",
+    "socials": {
+      "farcaster": "99"
+    },
+    "interfaceName": "UMKM Terminal",
+    "platformName": "Clanker"
+  },
+  "tokens": [
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0x4ce34AF3378a00C640125e4dBF4c9e64dff4c93b",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0x2211d1D0020DAEA8039E46Cf1367962070d77DA9",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0x46960D116427A03FF05C6A0Defe35e9DC29C0A69",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0x6ADea326FaeA1b688Af33Df59E18F7a819bCAA4F",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0x6e0d9c6dd8a08509bB625CAa35dc61a991406F62",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0x849151d7D0bF1F34b70d5caD5149D28CC2308bf1",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0x85c0BA9e1456Bc755a6ce69E1a85ccaA1FAa9E41",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0x8E86e5331D3A020909c9e42eA9051675555F5e49",
+      "rewardRecipients": []
+    },
+    {
+      "name": "Thoughtcoin",
+      "symbol": "THINK",
+      "image": "ipfs://bafkreicruffjxnrbduqzsx3m2lueaefdgwtpuqveem4qb4hlvcltz6uf3y",
+      "description": "This is the first deployment from ",
+      "socials": {
+        "farcaster": "99"
+      },
+      "tokenAdmin": "0xE73F9c181B571Cac2bf3173634d04a9921b7fFcf",
+      "rewardRecipients": []
+    }
+  ]
+}

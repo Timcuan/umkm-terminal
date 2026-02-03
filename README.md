@@ -4,12 +4,16 @@ Multi-chain token deployment SDK for Clanker protocol with secure multi-wallet m
 
 ## ✨ What's New in v4.25
 
+- 🚀 **Clanker API Integration** - REST API support with AI-powered optimization
+- 🤖 **Intelligent Method Selection** - Auto fallback between API and direct methods
 - 🔐 **Secure Multi-Wallet Management** - AES-256-GCM encryption with PBKDF2
 - 🔑 **Mnemonic Support** - 12-word recovery phrase compatible with MetaMask, Ledger, etc.
 - 📁 **Dedicated Wallet Storage** - Secure `.umkm-wallets/` folder
 - 🔄 **Easy Wallet Switching** - Switch between multiple wallets instantly
 - 📤 **Backup & Restore** - Encrypted backup files with recovery phrase
 - 🌐 **Farcaster Integration** - Fetch user wallets from Farcaster
+- ⚡ **Enhanced Batch Deployment** - Optimized multi-chain bulk operations
+- 🛡️ **Comprehensive Error Handling** - Intelligent retry logic with circuit breakers
 
 ## Supported Chains (Mainnet Only)
 
@@ -73,17 +77,57 @@ The interactive terminal provides:
 
 ---
 
+## 🚀 Clanker API Integration (New!)
+
+UMKM Terminal now supports both traditional contract deployment and the new Clanker API with AI-powered optimization:
+
+### Quick Setup
+```bash
+# Add your API key to environment
+export CLANKER_API_KEY=your-api-key-here
+
+# Use auto method for intelligent selection
+umkm deploy -n "My Token" -s "TKN" --method auto
+```
+
+### Method Options
+- `direct` - Traditional contract deployment (default)
+- `api` - Use Clanker API with AI optimization
+- `auto` - Intelligent selection with fallback (recommended)
+
+### Benefits of API Integration
+- 🤖 **AI-Powered Optimization** - Smart routing and gas optimization
+- ⚡ **Enhanced Batch Operations** - Efficient bulk deployments
+- 🔄 **Automatic Fallback** - Falls back to direct method if API fails
+- 🌐 **Multi-Chain Intelligence** - Chain-specific optimizations
+- 📊 **Advanced Analytics** - Deployment insights and recommendations
+
+### Configuration
+```bash
+# Environment variables
+CLANKER_API_KEY=your-api-key-here
+CLANKER_OPERATION_METHOD=auto
+CLANKER_API_TIMEOUT=30000
+```
+
+📖 **[Full API Integration Guide](./docs/clanker-api-integration.md)**
+
+---
+
 ## ⚡ CLI Commands
 
 ```bash
-# Simple deploy on Base
-umkm deploy -n "My Token" -s "TKN" -k 0xYOUR_PRIVATE_KEY
+# Simple deploy on Base (now with API support)
+umkm deploy -n "My Token" -s "TKN" -k 0xYOUR_PRIVATE_KEY --method auto
 
 # With vault (30% locked for 30 days)
 umkm deploy -n "My Token" -s "TKN" --vault 30 -k 0x...
 
 # On Arbitrum with MEV protection
 umkm deploy -n "My Token" -s "TKN" -c 42161 --mev 8 -k 0x...
+
+# Batch deploy with API optimization
+umkm batch deploy template.json --method api
 
 # See all options
 umkm --help

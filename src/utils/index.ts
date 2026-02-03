@@ -55,27 +55,39 @@ export function getPoolPositions(preset: PoolPositionPreset): PoolPosition[] {
   return POOL_POSITIONS[preset];
 }
 
+import { Result, success, failure } from '../errors/standardized-errors.js';
+
 /**
  * Validate pool positions
  * - Total BPS must equal 10000
  * - Ticks must be valid
  */
-export function validatePoolPositions(positions: PoolPosition[]): boolean {
-  const totalBps = positions.reduce((sum, p) => sum + p.bps, 0);
-  if (totalBps !== 10_000) {
-    return false;
-  }
-
+export function validatePoolPositions(positions: PoolPosition[]): Result<PoolPosition[], string> {
+  // First validate individual positions
   for (const pos of positions) {
     if (pos.tickLower >= pos.tickUpper) {
-      return false;
+      return failure(`Invalid tick range: tickLower (${pos.tickLower}) must be less than tickUpper (${pos.tickUpper})`);
     }
     if (pos.bps <= 0 || pos.bps > 10_000) {
-      return false;
+      return failure(`Invalid BPS value: ${pos.bps} must be between 1 and 10000`);
     }
   }
 
-  return true;
+  // Then validate total BPS
+  const totalBps = positions.reduce((sum, p) => sum + p.bps, 0);
+  if (totalBps !== 10_000) {
+    return failure(`Total BPS must equal 10000, got ${totalBps}`);
+  }
+
+  return success(positions);
+}
+
+/**
+ * Legacy function that returns boolean (for backward compatibility)
+ */
+export function validatePoolPositionsLegacy(positions: PoolPosition[]): boolean {
+  const result = validatePoolPositions(positions);
+  return result.success;
 }
 
 // ============================================================================
@@ -104,17 +116,21 @@ export function getPairedTokenAddress(chainId: number): `0x${string}` {
 // Encoding Utilities
 // ============================================================================
 
+import { type StructuredMetadata } from '../types/configuration.js';
+
+// ... other imports ...
+
 /**
  * Encode metadata to JSON string
  */
-export function encodeMetadata(metadata: Record<string, unknown>): string {
+export function encodeMetadata(metadata: StructuredMetadata): string {
   return JSON.stringify(metadata);
 }
 
 /**
  * Decode metadata from JSON string
  */
-export function decodeMetadata(metadata: string): Record<string, unknown> {
+export function decodeMetadata(metadata: string): StructuredMetadata {
   try {
     return JSON.parse(metadata);
   } catch {

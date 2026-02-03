@@ -5,13 +5,12 @@
 
 import { confirm, input, select } from '@inquirer/prompts';
 import chalk from 'chalk';
-import type { StoredWallet } from './types.js';
 import {
   formatAddress,
   generateWalletWithMnemonic,
+  mnemonicToPrivateKey,
   validateMnemonicPhrase,
   validatePrivateKey,
-  mnemonicToPrivateKey,
 } from './crypto.js';
 import {
   addWalletToStore,
@@ -19,8 +18,8 @@ import {
   createBackupFile,
   decryptWallet,
   decryptWalletMnemonic,
-  getAllWallets,
   getActiveWallet,
+  getAllWallets,
   getBackupDir,
   getCurrentWallet,
   getWalletDir,
@@ -33,6 +32,7 @@ import {
   updateWalletName,
   walletHasMnemonic,
 } from './storage.js';
+import type { StoredWallet } from './types.js';
 
 // ============================================================================
 // Menu Display Helpers
@@ -108,13 +108,17 @@ export async function showWalletMenu(): Promise<void> {
     // Show current status
     if (activeWallet) {
       console.log('');
-      console.log(`  ${chalk.gray('Active:')} ${chalk.cyan(activeWallet.name)} ${chalk.gray(`(${formatAddress(activeWallet.address)})`)}`);
+      console.log(
+        `  ${chalk.gray('Active:')} ${chalk.cyan(activeWallet.name)} ${chalk.gray(`(${formatAddress(activeWallet.address)})`)}`
+      );
       if (activeWallet.encryptedMnemonic) {
         console.log(`  ${chalk.gray('Type:')} ${chalk.green('HD Wallet (has recovery phrase)')}`);
       }
     } else if (currentEnvWallet) {
       console.log('');
-      console.log(`  ${chalk.gray('From .env:')} ${chalk.cyan(formatAddress(currentEnvWallet.address))}`);
+      console.log(
+        `  ${chalk.gray('From .env:')} ${chalk.cyan(formatAddress(currentEnvWallet.address))}`
+      );
       console.log(chalk.yellow('  (Not in wallet store - use "Add Current" to save)'));
     } else {
       console.log('');
@@ -222,10 +226,13 @@ async function generateNewWallet(): Promise<void> {
 
   const words = wallet.mnemonic.split(' ');
   for (let i = 0; i < words.length; i += 4) {
-    const row = words.slice(i, i + 4).map((w, j) => {
-      const num = String(i + j + 1).padStart(2, ' ');
-      return `${chalk.gray(`${num}.`)} ${chalk.yellow(w.padEnd(10))}`;
-    }).join('  ');
+    const row = words
+      .slice(i, i + 4)
+      .map((w, j) => {
+        const num = String(i + j + 1).padStart(2, ' ');
+        return `${chalk.gray(`${num}.`)} ${chalk.yellow(w.padEnd(10))}`;
+      })
+      .join('  ');
     console.log(`  ${row}`);
   }
 
@@ -259,7 +266,7 @@ async function generateNewWallet(): Promise<void> {
   // Get password
   console.log('');
   showInfo('Create a password to encrypt this wallet.');
-  showInfo('You\'ll need it to switch to or export this wallet.');
+  showInfo("You'll need it to switch to or export this wallet.");
   console.log('');
 
   const password = await input({
@@ -367,7 +374,7 @@ async function importFromMnemonic(): Promise<void> {
   }
 
   const validation = validatePrivateKey(privateKey);
-  if (!validation.valid || !validation.address) {
+  if (!validation.success) {
     showError('Failed to derive address');
     await pressEnter();
     return;
@@ -375,7 +382,7 @@ async function importFromMnemonic(): Promise<void> {
 
   console.log('');
   showSuccess('Valid recovery phrase!');
-  console.log(`  ${chalk.gray('Address:')} ${chalk.cyan(validation.address)}`);
+  console.log(`  ${chalk.gray('Address:')} ${chalk.cyan(validation.data.address)}`);
   console.log('');
 
   // Get name and password
@@ -417,12 +424,12 @@ async function importFromPrivateKey(): Promise<void> {
     validate: (v) => {
       if (!v.trim()) return 'Required';
       const result = validatePrivateKey(v);
-      return result.valid || result.error || 'Invalid key';
+      return result.success || result.error || 'Invalid key';
     },
   });
 
   const validation = validatePrivateKey(keyInput);
-  if (!validation.valid || !validation.address) {
+  if (!validation.success) {
     showError(validation.error || 'Invalid key');
     await pressEnter();
     return;
@@ -430,7 +437,7 @@ async function importFromPrivateKey(): Promise<void> {
 
   console.log('');
   showSuccess('Valid private key!');
-  console.log(`  ${chalk.gray('Address:')} ${chalk.cyan(validation.address)}`);
+  console.log(`  ${chalk.gray('Address:')} ${chalk.cyan(validation.data.address)}`);
   console.log('');
 
   // Get name and password
@@ -449,7 +456,7 @@ async function importFromPrivateKey(): Promise<void> {
     default: true,
   });
 
-  const result = addWalletToStore(validation.normalizedKey || keyInput, name, password, setActive);
+  const result = addWalletToStore(validation.data.normalizedKey, name, password, setActive);
 
   console.log('');
   if (result.success) {
@@ -531,7 +538,14 @@ async function importFromBackupFile(): Promise<void> {
   });
 
   const saveResult = result.mnemonic
-    ? addWalletWithMnemonicToStore(result.privateKey, result.mnemonic, name, newPassword, 0, setActive)
+    ? addWalletWithMnemonicToStore(
+        result.privateKey,
+        result.mnemonic,
+        name,
+        newPassword,
+        0,
+        setActive
+      )
     : addWalletToStore(result.privateKey, name, newPassword, setActive);
 
   console.log('');
@@ -669,7 +683,10 @@ async function exportWalletMenu(): Promise<void> {
   ];
 
   if (hasMnemonic) {
-    exportChoices.push({ name: `${chalk.green('[3]')} Display recovery phrase`, value: 'mnemonic' });
+    exportChoices.push({
+      name: `${chalk.green('[3]')} Display recovery phrase`,
+      value: 'mnemonic',
+    });
   }
 
   exportChoices.push({ name: `${chalk.yellow('[<]')} Cancel`, value: 'cancel' });
@@ -748,10 +765,13 @@ async function exportWalletMenu(): Promise<void> {
 
       const words = mnemonic.split(' ');
       for (let i = 0; i < words.length; i += 4) {
-        const row = words.slice(i, i + 4).map((w, j) => {
-          const num = String(i + j + 1).padStart(2, ' ');
-          return `${chalk.gray(`${num}.`)} ${chalk.yellow(w.padEnd(10))}`;
-        }).join('  ');
+        const row = words
+          .slice(i, i + 4)
+          .map((w, j) => {
+            const num = String(i + j + 1).padStart(2, ' ');
+            return `${chalk.gray(`${num}.`)} ${chalk.yellow(w.padEnd(10))}`;
+          })
+          .join('  ');
         console.log(`  ${row}`);
       }
 

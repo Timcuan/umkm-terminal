@@ -1,0 +1,33 @@
+{
+  "name": "Batch 1x nicksherley",
+  "description": "Deploy 1 nickshirley tokens",
+  "chain": "base",
+  "defaults": {
+    "fee": 5,
+    "mev": 8,
+    "feeType": "static",
+    "tokenAdmin": "",
+    "rewardRecipient": "0x3A1dc8C3C1A28853b8002AeBaF98F604c4c51795",
+    "rewardToken": "Both",
+    "image": "https://res.cloudinary.com/base-app/image/upload/f_auto/v1766787929/023e2ec3-46d5-4ff3-8d1f-6b125da81006.jpg",
+    "description": "This is the OFFICIAL Nick Shirley BASE account",
+    "socials": {
+      "farcaster": "1948008"
+    },
+    "interfaceName": "UMKM Terminal",
+    "platformName": "Clanker"
+  },
+  "tokens": [
+    {
+      "name": "nickshirley",
+      "symbol": "nicksherley",
+      "image": "https://res.cloudinary.com/base-app/image/upload/f_auto/v1766787929/023e2ec3-46d5-4ff3-8d1f-6b125da81006.jpg",
+      "description": "This is the OFFICIAL Nick Shirley BASE account",
+      "socials": {
+        "farcaster": "1948008"
+      },
+      "tokenAdmin": "0xCb5048DaebFcEf791D73F2ACCcE98484E2c27f19",
+      "rewardRecipients": []
+    }
+  ]
+}

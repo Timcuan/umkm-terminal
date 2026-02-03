@@ -16,9 +16,9 @@ export interface WalletInfo {
 export interface StoredWallet {
   address: string;
   name: string;
-  encryptedKey: string;        // Encrypted private key (AES-256-GCM)
-  encryptedMnemonic?: string;  // Encrypted mnemonic (if generated with mnemonic)
-  derivationIndex?: number;    // BIP44 derivation index (default 0)
+  encryptedKey: string; // Encrypted private key (AES-256-GCM)
+  encryptedMnemonic?: string; // Encrypted mnemonic (if generated with mnemonic)
+  derivationIndex?: number; // BIP44 derivation index (default 0)
   createdAt: string;
   isActive: boolean;
 }
@@ -40,11 +40,11 @@ export interface WalletBackup {
   type: 'umkm-wallet-backup';
   address: string;
   name?: string;
-  encrypted: string;              // Encrypted private key
-  encryptedMnemonic?: string;     // Encrypted mnemonic (if available)
+  encrypted: string; // Encrypted private key
+  encryptedMnemonic?: string; // Encrypted mnemonic (if available)
   createdAt: string;
   warning: string;
-  filename?: string;              // Added when listing backup files
+  filename?: string; // Added when listing backup files
 }
 
 /**
@@ -57,12 +57,37 @@ export interface ValidationResult {
   normalizedKey?: string;
 }
 
+import { UIErrorResponse } from '../errors/standardized-errors.js';
+import { type ServiceResultDetails } from '../types/configuration.js';
+
 /**
  * Operation result
  */
-export interface WalletOperationResult {
-  success: boolean;
-  error?: string;
+export interface WalletOperationResult extends UIErrorResponse {
   address?: string;
   filePath?: string;
+}
+
+/**
+ * Wallet store transaction options
+ */
+export interface WalletStoreTransactionOptions {
+  autoCommit?: boolean;
+  syncToEnv?: boolean;
+}
+
+/**
+ * Wallet transaction result
+ */
+export type WalletTransactionResult = {
+  success: true;
+  data: {
+    store: WalletStore;
+    activeWallet?: StoredWallet;
+    syncedToEnv?: boolean;
+  };
+} | {
+  success: false;
+  error: string;
+  details?: ServiceResultDetails;
 }
